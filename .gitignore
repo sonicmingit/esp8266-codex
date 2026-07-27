@@ -3,6 +3,8 @@ firmware/.pio-venv/
 mac-app/.build/
 windows-app/**/bin/
 windows-app/**/obj/
+# Local single-file Windows publish artifacts.
+windows-app/**/publish-single/
 __pycache__/
 *.pyc
 .DS_Store

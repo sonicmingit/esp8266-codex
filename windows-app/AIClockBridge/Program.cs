@@ -10,7 +10,7 @@ namespace AIClockBridge;
 // pet picker window uses): AIClockBridge --test-pet <slug> <claude|codex> <host>
 static class Program
 {
-    const int Port = 8765;
+    const int Port = 18765;
 
     [STAThread]
     static void Main(string[] args)
@@ -52,7 +52,7 @@ static class Program
             postRoutes: new()
             {
                 // Claude Code / Codex hooks push lifecycle events here (README §7):
-                // curl -d '{"agent":"claude","event":"PreToolUse"}' http://127.0.0.1:8765/event
+                // curl -d '{"agent":"claude","event":"PreToolUse"}' http://127.0.0.1:18765/event
                 ["/event"] = body =>
                 {
                     try

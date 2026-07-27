@@ -10,7 +10,7 @@
 - **右键托盘图标** → 控制菜单：Claude/Codex 完整额度（5h/周 + 重置倒计时）、
   自动查找并配对设备、设置设备地址、屏幕显示模式、petdex 桌宠画廊、恢复默认动画、
   把本机设为设备桥接、桥接服务地址
-- 本地 HTTP 服务 `0.0.0.0:8765`：`/status`、`/net`、`/music`、`/music/cover.raw`、
+- 本地 HTTP 服务 `0.0.0.0:18765`：`/status`、`/net`、`/music`、`/music/cover.raw`、
   `/music/text.raw`、`POST /event`（Claude Code / Codex hooks 秒级状态推送）
 - 数据来源同 Mac 版：`%USERPROFILE%\.claude\projects` / `%USERPROFILE%\.codex\sessions`
   的 JSONL 日志 + 各自官方用量接口（凭据读
@@ -39,18 +39,18 @@ dotnet publish -c Release -r win-x64 --self-contained false
 # 产物在 bin\Release\net8.0-windows10.0.19041.0\win-x64\publish\AIClockBridge.exe
 ```
 
-首次启动 Windows 会弹防火墙授权（HTTP 服务监听 0.0.0.0:8765，设备要从局域网访问，
+首次启动 Windows 会弹防火墙授权（HTTP 服务监听 0.0.0.0:18765，设备要从局域网访问，
 选"允许"）。
 
 **开机自启**：`Win+R` → `shell:startup` → 把 `AIClockBridge.exe` 的快捷方式放进去。
 
 **Hooks 实时状态**（可选，同主 README §7）：Claude Code / Codex 的 hooks 往
-`http://127.0.0.1:8765/event` POST 事件即可，Windows 下 curl 自带。
+`http://127.0.0.1:18765/event` POST 事件即可，Windows 下 curl 自带。
 
 ## 验证
 
 ```powershell
-curl.exe -s http://localhost:8765/status | python -m json.tool
+curl.exe -s http://localhost:18765/status | python -m json.tool
 ```
 
 配置持久化在 `%APPDATA%\AIClockBridge\settings.json`（设备地址等）。
@@ -69,5 +69,5 @@ curl.exe -s http://localhost:8765/status | python -m json.tool
 | `NetSpeedMonitor.cs` | `NetSpeedMonitor.swift` | 4Hz 网速采样环 |
 | `NowPlayingMonitor.cs` | `NowPlayingMonitor.swift` | 系统 Now Playing + 封面/文字条 RGB565 |
 | `DeviceClient.cs` | `DeviceClient.swift` | 设备 HTTP API + 自动配对/子网扫描 |
-| `MiniHttpServer.cs` | `HTTPServer.swift` | 0.0.0.0:8765 极简 HTTP 服务 |
+| `MiniHttpServer.cs` | `HTTPServer.swift` | 0.0.0.0:18765 极简 HTTP 服务 |
 | `Rgb565.cs` | （MirrorPopover 内联） | RGB565 大端编解码 |
