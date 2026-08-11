@@ -28,6 +28,11 @@ sealed class MirrorControl : Control
     public string Line2 = "Weekly -";
     public bool ShowingClaude = true;
     public bool DeviceOK;
+    // optional MODE_DUAL mirror: Claude 5h/week and Codex weekly quota at once.
+    public bool DualMode;
+    public double? DualClaudeFivePct, DualClaudeWeekPct, DualCodexWeekPct;
+    public int? DualClaudeFiveResetMin, DualClaudeWeekResetMin, DualCodexWeekResetMin;
+    public bool DualClaudeWorking, DualCodexWorking;
     // net-mode mirror: same scrolling area-chart model as the firmware —
     // one column per 250ms sample, 224-column (56s) window, shared "nice"
     // full-scale, dim-green download area + yellow upload line.
@@ -107,6 +112,11 @@ sealed class MirrorControl : Control
             g.SetClip(panel);
         }
 
+        if (DualMode)
+        {
+            DrawDualScene(g);
+            return;
+        }
         if (NetMode)
         {
             DrawNetScene(g);
@@ -325,6 +335,79 @@ sealed class MirrorControl : Control
         }
     }
 
+    // Optional dual quota page, matching the firmware's three-card layout.
+    void DrawDualScene(Graphics g)
+    {
+        var white = Color.FromArgb(255, 251, 247);
+        var grey = Color.FromArgb(181, 174, 165);
+        var track = Color.FromArgb(41, 40, 41);
+        var card = Color.FromArgb(24, 28, 24);
+        var claude = Color.FromArgb(222, 117, 82);
+        var codex = Color.FromArgb(107, 116, 248);
+        var working = Color.FromArgb(123, 142, 90);
+
+        using var titleFont = new Font("Microsoft YaHei UI", 9.5f, FontStyle.Bold);
+        using var labelFont = new Font("Consolas", 8f, FontStyle.Bold);
+        using var valueFont = new Font("Consolas", 20f, FontStyle.Bold);
+        using var resetFont = new Font("Consolas", 7.5f);
+        using var greyBrush = new SolidBrush(grey);
+        using var whiteBrush = new SolidBrush(white);
+        using var trackBrush = new SolidBrush(track);
+        using var cardBrush = new SolidBrush(card);
+        using var claudeBrush = new SolidBrush(claude);
+        using var codexBrush = new SolidBrush(codex);
+        using var workingBrush = new SolidBrush(working);
+
+        void Title(Image logo, string name, float y, bool active)
+        {
+            g.DrawImage(logo, new RectangleF(10, y, 24, 24));
+            g.DrawString(name, titleFont, whiteBrush, 40, y + 4);
+            g.FillEllipse(active ? workingBrush : trackBrush, 218, y + 8, 8, 8);
+        }
+
+        void Card(float y, string label, double? pct, int? reset, Brush accent)
+        {
+            using var shape = RoundedRect(new RectangleF(8, y, 224, 52), 8);
+            g.FillPath(cardBrush, shape);
+            g.DrawString(label, labelFont, greyBrush, 18, y + 10);
+            var value = pct.HasValue && pct.Value >= 0 ? $"{(int)pct.Value}%" : "-";
+            g.DrawString(value, valueFont, whiteBrush, 48, y + 2);
+            using var right = new StringFormat { Alignment = StringAlignment.Far };
+            g.DrawString(ResetText(reset), resetFont, greyBrush,
+                         new RectangleF(145, y + 11, 77, 16), right);
+            using var rail = RoundedRect(new RectangleF(18, y + 40, 204, 6), 3);
+            g.FillPath(trackBrush, rail);
+            if (pct.HasValue && pct.Value > 0)
+            {
+                var width = Math.Max(6f, 204f * (float)Math.Min(pct.Value, 100) / 100f);
+                using var fill = RoundedRect(new RectangleF(18, y + 40, width, 6), 3);
+                g.FillPath(accent, fill);
+            }
+        }
+
+        Title(ClaudeLogo, "Claude", 3, DualClaudeWorking);
+        Card(29, "5H", DualClaudeFivePct, DualClaudeFiveResetMin, claudeBrush);
+        Card(85, "WK", DualClaudeWeekPct, DualClaudeWeekResetMin, claudeBrush);
+        g.FillRectangle(trackBrush, 8, 141, 224, 1);
+        Title(CodexLogo, "Codex", 145, DualCodexWorking);
+        Card(171, "WK", DualCodexWeekPct, DualCodexWeekResetMin, codexBrush);
+
+        if (!DeviceOK || (NeedsInput && FlashOn))
+        {
+            using var alert = new Pen(Color.Red, 3);
+            g.DrawRectangle(alert, 1.5f, 1.5f, 237, 237);
+        }
+    }
+
+    static string ResetText(int? minutes)
+    {
+        if (!minutes.HasValue || minutes.Value < 0) return "-";
+        var value = minutes.Value;
+        if (value < 60) return $"{value}m";
+        if (value < 1440) return $"{value / 60}h {value % 60}m";
+        return $"{value / 1440}d {(value % 1440) / 60}h";
+    }
+
     // Stock watchlist, same 54px rows as the firmware: grey code (the mirror
     // can render the CJK name next to it), big white price, colored change.
     void DrawStockScene(Graphics g)
@@ -388,8 +471,8 @@ sealed class MirrorForm : Form
     readonly StockMonitor _stockMonitor;
     readonly MirrorControl _mirror = new();
     readonly RadioButton[] _modeButtons;
-    static readonly string[] Modes = { "auto", "claude", "codex", "net", "music", "stock" };
-    static readonly string[] ModeLabels = { "自动", "Claude", "Codex", "网速", "音乐", "股票" };
+    static readonly string[] Modes = { "auto", "claude", "codex", "dual", "net", "music", "stock" };
+    static readonly string[] ModeLabels = { "自动", "Claude", "Codex", "双栏", "网速", "音乐", "股票" };
     readonly Label _statusLabel = new();
     readonly TrackBar _brightness = new() { Minimum = 0, Maximum = 100, TickStyle = TickStyle.None };
     readonly Label _brightnessValue = new();
@@ -592,7 +675,8 @@ sealed class MirrorForm : Form
         _lastInfo = info;
         _mirror.DeviceOK = true;
         ApplyScene(info);
-        EnsureSprite(info);
+        if (!_mirror.DualMode && !_mirror.NetMode && !_mirror.MusicMode && !_mirror.StockMode)
+            EnsureSprite(info);
         SyncBrightness(info);
         var modeIdx = Math.Max(0, Array.IndexOf(Modes, info.Mode));
         _applyingMode = true;
@@ -600,7 +684,8 @@ sealed class MirrorForm : Form
         _applyingMode = false;
         var modeText = info.Mode == "auto" ? "自动切换"
             : info.Mode == "net" ? "网速曲线"
-            : info.Mode == "music" ? "音乐播放" : "固定显示";
+            : info.Mode == "music" ? "音乐播放"
+            : info.Mode == "dual" ? "双栏额度" : "固定显示";
         _statusLabel.Text = $"{info.Ip} · {modeText} · 数据 {info.Bridge}";
     }
 
@@ -610,9 +695,25 @@ sealed class MirrorForm : Form
         // mirror what's actually on the device screen (effective), so an
         // AUTO device that auto-switched to music shows music here too
         var enteringNet = info.Effective == "net" && !_mirror.NetMode;
+        _mirror.DualMode = info.Effective == "dual";
         _mirror.NetMode = info.Effective == "net";
         _mirror.MusicMode = info.Effective == "music";
         _mirror.StockMode = info.Effective == "stock";
+        if (_mirror.DualMode)
+        {
+            var dual = _service.Snapshot();
+            _mirror.DualClaudeFivePct = dual.Claude.FiveHourPct;
+            _mirror.DualClaudeFiveResetMin = dual.Claude.FiveHourResetMin;
+            _mirror.DualClaudeWeekPct = dual.Claude.SevenDayPct;
+            _mirror.DualClaudeWeekResetMin = dual.Claude.SevenDayResetMin;
+            _mirror.DualCodexWeekPct = dual.Codex.PrimaryPct ?? dual.Codex.WeeklyPct;
+            _mirror.DualCodexWeekResetMin = dual.Codex.PrimaryResetMin ?? dual.Codex.WeeklyResetMin;
+            _mirror.DualClaudeWorking = dual.Claude.Status == "working";
+            _mirror.DualCodexWorking = dual.Codex.Status == "working";
+            _mirror.NeedsInput = dual.Claude.NeedsInput || dual.Codex.NeedsInput;
+            _mirror.Invalidate();
+            return;
+        }
         if (_mirror.StockMode)
         {
             _mirror.StockRows = _stockMonitor.Snapshot;
@@ -742,6 +843,7 @@ sealed class MirrorForm : Form
             _mirror.Invalidate();
         }
 
+        if (_mirror.DualMode || _mirror.MusicMode || _mirror.StockMode) return;
         if (_mirror.Frames.Count == 0) return;
         var snap = _service.Snapshot();
         var working = _lastInfo.Showing == "codex"

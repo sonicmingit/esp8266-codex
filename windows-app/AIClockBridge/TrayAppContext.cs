@@ -83,8 +83,8 @@ sealed class TrayAppContext : ApplicationContext
         foreach (var (title, mode) in new[]
         {
             ("自动（谁在干活显示谁）", "auto"), ("固定 Claude", "claude"),
-            ("固定 Codex", "codex"), ("网速曲线", "net"), ("音乐播放", "music"),
-            ("股票行情", "stock"),
+            ("固定 Codex", "codex"), ("双栏额度", "dual"), ("网速曲线", "net"),
+            ("音乐播放", "music"), ("股票行情", "stock"),
         })
         {
             var item = new ToolStripMenuItem(title);

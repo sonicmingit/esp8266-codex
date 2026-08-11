@@ -14,7 +14,7 @@ class DeviceInfo
     public string Ip = "";
     public string Ssid = "";
     public string Bridge = "";
-    public string Mode = "auto";       // configured: auto | claude | codex | net | music
+    public string Mode = "auto";       // configured: auto | claude | codex | dual | net | music
     public string Effective = "auto";  // what's actually on screen (AUTO may promote to music)
     public string Showing = "";
     public int LastUpdateS = -1;       // seconds since the device last got /status data, -1 = never
@@ -150,7 +150,7 @@ static class DeviceClient
         }
     }
 
-    /// POST /api/display  mode=auto|claude|codex|net|music
+    /// POST /api/display  mode=auto|claude|codex|dual|net|music
     public static Task SetDisplayMode(string mode) =>
         PostForm("api/display", new() { ["mode"] = mode });
 
