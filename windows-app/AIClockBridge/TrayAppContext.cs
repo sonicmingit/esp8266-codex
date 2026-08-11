@@ -13,28 +13,32 @@ sealed class TrayAppContext : ApplicationContext
     readonly StatusService _service;
     readonly UsageFetcher _usage;
     readonly int _port;
+    readonly SerialLink _serialLink;
     readonly MirrorForm _mirror;
     readonly ContextMenuStrip _menu = new();
 
     readonly ToolStripMenuItem _claudeUsageItem = new("Claude …") { Enabled = false };
     readonly ToolStripMenuItem _codexUsageItem = new("Codex …") { Enabled = false };
+    readonly ToolStripMenuItem _connectionItem = new("连接：正在扫描 USB") { Enabled = false };
     readonly ToolStripMenuItem _deviceInfoItem = new("设备：未设置") { Enabled = false };
     readonly ToolStripMenuItem _networkMenu = new("绑定网卡");
     readonly Dictionary<string, ToolStripMenuItem> _modeItems = new();
 
     public TrayAppContext(StatusService service, UsageFetcher usage, NetSpeedMonitor netMonitor,
-                          NowPlayingMonitor nowPlaying, StockMonitor stockMonitor, int port)
+                          NowPlayingMonitor nowPlaying, StockMonitor stockMonitor, int port,
+                          SerialLink serialLink)
     {
         _service = service;
         _usage = usage;
         _port = port;
+        _serialLink = serialLink;
         _mirror = new MirrorForm(service, netMonitor, nowPlaying, stockMonitor);
 
         BuildMenu();
         _trayIcon = new NotifyIcon
         {
             Icon = TrayIconFromAsset(),
-            Text = "AI Clock Bridge",
+            Text = $"AI Clock Bridge {Application.ProductVersion}",
             Visible = true,
             ContextMenuStrip = _menu,
         };
@@ -44,12 +48,14 @@ sealed class TrayAppContext : ApplicationContext
         };
         _menu.Opening += (_, _) =>
         {
+            RefreshConnectionLine();
             RefreshNetworkMenu();
             _usage.Refresh();
             RefreshUsageLines();
             _ = RefreshDeviceSection();
         };
         _usage.OnUpdate = RefreshUsageLines;
+        _serialLink.StateChanged += SerialStateChanged;
     }
 
     /// User-supplied device logo (bezel + dark screen + smiley + green status
@@ -72,6 +78,7 @@ sealed class TrayAppContext : ApplicationContext
         _menu.Items.Add(_codexUsageItem);
         _menu.Items.Add(new ToolStripSeparator());
 
+        _menu.Items.Add(_connectionItem);
         _networkMenu.DropDownOpening += (_, _) => RefreshNetworkMenu();
         _menu.Items.Add(_networkMenu);
         _menu.Items.Add(_deviceInfoItem);
@@ -135,6 +142,28 @@ sealed class TrayAppContext : ApplicationContext
             _trayIcon.Visible = false;
             Application.Exit();
         }));
+    }
+
+    void SerialStateChanged()
+    {
+        if (!_menu.IsHandleCreated) return;
+        try { _menu.BeginInvoke((Action)RefreshConnectionLine); } catch { }
+    }
+
+    void RefreshConnectionLine()
+    {
+        if (_serialLink.IsLinked)
+        {
+            var fw = _serialLink.FirmwareVersion;
+            _connectionItem.Text = $"连接：USB {_serialLink.PortName}（有线优先）"
+                + (fw.Length > 0 ? $" · FW {fw}" : "");
+            _trayIcon.Text = $"AI Clock Bridge · USB {_serialLink.PortName}";
+        }
+        else
+        {
+            _connectionItem.Text = "连接：Wi-Fi/局域网（正在扫描 USB）";
+            _trayIcon.Text = $"AI Clock Bridge {Application.ProductVersion}";
+        }
     }
 
     void RefreshNetworkMenu()
@@ -235,13 +264,15 @@ sealed class TrayAppContext : ApplicationContext
     async Task RefreshDeviceSection()
     {
         var host = DeviceClient.Host;
-        if (host.Length == 0)
+        if (host.Length == 0 && !_serialLink.IsLinked)
         {
             _deviceInfoItem.Text = "设备：未设置地址";
             foreach (var item in _modeItems.Values) item.Checked = false;
             return;
         }
-        _deviceInfoItem.Text = $"设备：{host}（连接中…）";
+        _deviceInfoItem.Text = _serialLink.IsLinked
+            ? $"设备：USB {_serialLink.PortName}（读取中…）"
+            : $"设备：{host}（连接中…）";
         DeviceInfo info;
         try
         {
@@ -268,9 +299,13 @@ sealed class TrayAppContext : ApplicationContext
         };
         var showing = info.Mode == "net" ? "网速"
             : info.Mode == "music" ? "音乐"
+            : info.Mode == "stock" ? "股票"
+            : info.Mode == "dual" ? "双栏额度"
             : (info.Showing == "claude" ? "Claude" : "Codex");
-        _deviceInfoItem.Text =
-            $"设备：{info.Ip} · 正在显示 {showing} · {string.Join(" ", sprites)}";
+        var transport = info.Wired ? $"USB {_serialLink.PortName}" : info.Ip;
+        _deviceInfoItem.Text = info.Wired
+            ? $"设备：{transport} · 正在显示 {showing} · 有线优先"
+            : $"设备：{transport} · 正在显示 {showing} · {string.Join(" ", sprites)}";
         foreach (var (mode, item) in _modeItems) item.Checked = mode == info.Mode;
     }
 
@@ -278,6 +313,12 @@ sealed class TrayAppContext : ApplicationContext
 
     async Task AutoPairAction()
     {
+        if (_serialLink.IsLinked)
+        {
+            Toast("USB 已连接", $"设备已通过 {_serialLink.PortName} 有线连接，无需局域网配对。");
+            await RefreshDeviceSection();
+            return;
+        }
         _deviceInfoItem.Text = "设备：正在查找…";
         var ip = await DeviceClient.AutoPair(msg => _deviceInfoItem.Text = $"设备：{msg}");
         if (ip != null)

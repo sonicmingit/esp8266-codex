@@ -5,6 +5,7 @@
 
 功能与 Mac 版一致：
 
+- **USB 有线优先**：插入 SD2 后自动识别 CH340/CH343 串口并握手，额度、状态、网速、股票及显示/亮度命令优先走 USB；拔线后自动回退 Wi-Fi/LAN
 - **左键托盘图标** → ESP8266 屏幕实时镜像（额度环 + 桌宠动画 + 网速图 + 音乐页，
   与设备渲染同一份数据），底部附 自动/Claude/Codex/双栏/网速/音乐/股票 快速切换
 - **右键托盘图标** → 控制菜单：Claude/Codex 完整额度（5h/周 + 重置倒计时）、
@@ -26,6 +27,20 @@
 - 无固件刷写入口（刷写请用网页版刷写工具）
 - 唯一的第三方依赖是 [ImageSharp](https://github.com/SixLabors/ImageSharp)——
   System.Drawing 解不了 petdex 的 WebP 精灵图、也编不了多帧 GIF
+
+## USB 有线优先
+
+Windows 客户端会每 2 秒扫描串口。默认优先识别 WCH CH340/CH343（USB VID
+`1A86`），发送 `#HELLO` 并且仅在固件返回 `#DEVICE` 后接管连接，避免误用其他
+串口设备。连接成功后托盘会显示“USB COMx · 有线优先”。
+
+- 指定端口：启动前设置 `AICLOCK_SERIAL_PORT=COM8`
+- 扫描所有串口：设置 `AICLOCK_SERIAL_SCAN_ALL=1`（仍需通过设备握手）
+- USB 断开、端口被占用或写入失败时，显示/亮度命令自动回退设备 HTTP API
+- 额度、工作状态、网速和股票可在不配置 Wi-Fi 时通过 USB 显示
+- 音乐封面、音乐文字条、自定义 GIF、网页设置和亮度持久化仍依赖 Wi-Fi；USB
+  亮度命令只对当前运行周期生效
+- 烧录固件前请退出托盘客户端，因为 Windows 串口同一时间只能由一个程序独占
 
 ## 构建 / 运行
 
@@ -87,5 +102,6 @@ curl.exe -s http://localhost:8765/status | python -m json.tool
 | `NetSpeedMonitor.cs` | `NetSpeedMonitor.swift` | 4Hz 网速采样环 |
 | `NowPlayingMonitor.cs` | `NowPlayingMonitor.swift` | 系统 Now Playing + 封面/文字条 RGB565 |
 | `DeviceClient.cs` | `DeviceClient.swift` | 设备 HTTP API + 自动配对/子网扫描 |
+| `SerialLink.cs` | `SerialLink.swift` | USB 串口发现、握手、数据推送与有线优先 |
 | `MiniHttpServer.cs` | `HTTPServer.swift` | 所选网卡 + 127.0.0.1:8765 极简 HTTP 服务 |
 | `Rgb565.cs` | （MirrorPopover 内联） | RGB565 大端编解码 |

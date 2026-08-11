@@ -36,6 +36,13 @@ static class Program
         var stockMonitor = new StockMonitor();
         stockMonitor.Start();
 
+        // USB is preferred whenever the SD2 handshake succeeds. DeviceClient
+        // automatically falls back to HTTP when the cable is absent or a write fails.
+        using var serialLink = new SerialLink(service, netMonitor, stockMonitor);
+        serialLink.Start();
+        DeviceClient.SendWiredCommand = serialLink.SendCommand;
+        DeviceClient.WiredInfoProvider = serialLink.WiredDeviceInfo;
+
         var server = new MiniHttpServer(Port,
             routes: new()
             {
@@ -96,7 +103,7 @@ static class Program
         // erased device knows no bridge host, so it never polls anyone): if the
         // device stays silent, find it ourselves and hand it our address.
         using var pairingWatchdog = new System.Threading.Timer(
-            _ => _ = DeviceClient.HealPairingIfNeeded(Port), null,
+            _ => { if (!serialLink.IsLinked) _ = DeviceClient.HealPairingIfNeeded(Port); }, null,
             TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
 
         void ApplyNetworkBinding()
@@ -124,9 +131,12 @@ static class Program
         NetworkBinding.Changed += ApplyNetworkBinding;
         ApplyNetworkBinding();
 
-        var context = new TrayAppContext(service, usage, netMonitor, nowPlaying, stockMonitor, Port);
+        var context = new TrayAppContext(service, usage, netMonitor, nowPlaying, stockMonitor,
+                                         Port, serialLink);
         usage.StartAutoRefresh();
         Application.Run(context);
+        DeviceClient.SendWiredCommand = null;
+        DeviceClient.WiredInfoProvider = null;
     }
 
     static async Task<int> TestPet(string[] args)

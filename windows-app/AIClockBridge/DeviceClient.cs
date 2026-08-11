@@ -20,6 +20,8 @@ class DeviceInfo
     public int LastUpdateS = -1;       // seconds since the device last got /status data, -1 = never
     public int SpriteRev;              // bumped by the device on animation change
     public int Brightness = 100;       // backlight 0-100 (0 = off)
+    public bool Wired;                 // true when USB serial is the active path
+    public string FirmwareVersion = "";
     public bool ClaudeCustomSprite;
     public bool CodexCustomSprite;
     public int ClaudeW = 111, ClaudeH = 120;
@@ -40,6 +42,11 @@ static class DeviceClient
     // posts, 30s sprite pull, 60s GIF upload+on-device decode), so the client
     // itself must not impose a shorter global one
     static readonly HttpClient Http = CreateHttpClient();
+
+    // Installed by Program when SerialLink starts. Display/brightness commands
+    // use USB first; a false result falls back to the existing HTTP path.
+    public static Func<IReadOnlyDictionary<string, object>, bool> SendWiredCommand;
+    public static Func<DeviceInfo> WiredInfoProvider;
 
     public static string Host
     {
@@ -103,15 +110,23 @@ static class DeviceClient
     /// GET /api/info
     public static async Task<DeviceInfo> FetchInfo()
     {
+        // A completed serial handshake is authoritative. Returning immediately
+        // keeps the tray/mirror responsive in pure-USB mode instead of waiting
+        // for an unavailable device HTTP endpoint to time out.
+        var wiredNow = WiredInfoProvider?.Invoke();
+        if (wiredNow != null) return wiredNow;
+
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         string body;
         try
         {
             body = await Http.GetStringAsync(Resolve("api/info"), cts.Token);
         }
-        catch (DeviceException) { throw; }
         catch (Exception e)
         {
+            var wired = WiredInfoProvider?.Invoke();
+            if (wired != null) return wired;
+            if (e is DeviceException deviceError) throw deviceError;
             throw new DeviceException($"无法连接设备：{e.Message}");
         }
         try
@@ -128,6 +143,8 @@ static class DeviceClient
                 SpriteRev = Int(root, "sprite_rev"),
                 Brightness = Int(root, "brightness", 100),
                 Showing = Str(root, "showing"),
+                Wired = Bool(root, "wired"),
+                FirmwareVersion = Str(root, "fw"),
             };
             info.Effective = Str(root, "effective", info.Mode);
             if (root.TryGetProperty("claude", out var claude))
@@ -150,17 +167,25 @@ static class DeviceClient
         }
     }
 
-    /// POST /api/display  mode=auto|claude|codex|dual|net|music
-    public static Task SetDisplayMode(string mode) =>
-        PostForm("api/display", new() { ["mode"] = mode });
+    /// USB #CMD first, otherwise POST /api/display; supports auto|claude|codex|dual|net|music|stock
+    public static Task SetDisplayMode(string mode)
+    {
+        if (SendWiredCommand?.Invoke(new Dictionary<string, object> { ["display"] = mode }) == true)
+            return Task.CompletedTask;
+        return PostForm("api/display", new() { ["mode"] = mode });
+    }
 
     /// POST /api/bridge  host=ip:port
     public static Task SetBridgeHost(string bridgeHost) =>
         PostForm("api/bridge", new() { ["host"] = bridgeHost });
 
-    /// POST /api/brightness  level=0-100 (0 = backlight off); device persists it
-    public static Task SetBrightness(int level) =>
-        PostForm("api/brightness", new() { ["level"] = level.ToString() });
+    /// USB #CMD first, otherwise POST /api/brightness; HTTP persists, USB applies until reboot
+    public static Task SetBrightness(int level)
+    {
+        if (SendWiredCommand?.Invoke(new Dictionary<string, object> { ["brightness"] = level }) == true)
+            return Task.CompletedTask;
+        return PostForm("api/brightness", new() { ["level"] = level.ToString() });
+    }
 
     /// POST /sprite/{claude|codex}  multipart GIF upload — the device decodes
     /// and rescales the GIF on-board, then swaps the animation immediately.

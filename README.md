@@ -21,7 +21,7 @@
   <img src="docs/images/hero.jpg" width="640" alt="AI Mac 小屏幕">
 </p>
 
-一块 240×240 的复古小电视，放在桌上实时显示 **Claude Code / Codex CLI 在干什么、额度还剩多少**。不需要任何 API key：数据来自本机已有的 CLI 登录凭据和会话日志，由配套的 Mac / Windows 桥接程序在局域网内提供给设备。
+一块 240×240 的复古小电视，放在桌上实时显示 **Claude Code / Codex CLI 在干什么、额度还剩多少**。不需要任何 API key：数据来自本机已有的 CLI 登录凭据和会话日志，由配套的 Mac / Windows 桥接程序提供给设备；Windows 版还支持 USB 有线优先，拔线后自动回退局域网。
 
 ## 功能
 
@@ -53,9 +53,9 @@
 从 [Releases](https://github.com/pengchujin/esp8266-ai/releases/latest) 下载并打开：
 
 - **macOS**：`AIClockBridge-*-macOS.dmg`，拖入 Applications（ad-hoc 签名，首次启动需在「系统设置 → 隐私与安全性」允许，并同意本地网络权限）
-- **Windows**：`AIClockBridge-*-Windows-x64.exe`，双击即用
+- **Windows**：`AIClockBridge-*-Windows-x64.exe`，双击即用；USB 连接 SD2 时自动使用有线数据通道，未插线时使用局域网
 
-桥接程序常驻菜单栏 / 托盘，会**自动发现并配对**同一局域网内的设备——到这里屏幕就活了。
+桥接程序常驻菜单栏 / 托盘。Windows 会优先自动握手 USB 串口；未连接 USB 时，自动发现并配对同一局域网内的设备——到这里屏幕就活了。
 
 <p align="center">
   <img src="docs/images/working.jpg" width="640" alt="工作演示">

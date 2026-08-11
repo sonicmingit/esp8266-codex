@@ -675,7 +675,8 @@ sealed class MirrorForm : Form
         _lastInfo = info;
         _mirror.DeviceOK = true;
         ApplyScene(info);
-        if (!_mirror.DualMode && !_mirror.NetMode && !_mirror.MusicMode && !_mirror.StockMode)
+        if (!info.Wired && !_mirror.DualMode && !_mirror.NetMode &&
+            !_mirror.MusicMode && !_mirror.StockMode)
             EnsureSprite(info);
         SyncBrightness(info);
         var modeIdx = Math.Max(0, Array.IndexOf(Modes, info.Mode));
@@ -686,7 +687,9 @@ sealed class MirrorForm : Form
             : info.Mode == "net" ? "网速曲线"
             : info.Mode == "music" ? "音乐播放"
             : info.Mode == "dual" ? "双栏额度" : "固定显示";
-        _statusLabel.Text = $"{info.Ip} · {modeText} · 数据 {info.Bridge}";
+        _statusLabel.Text = info.Wired
+            ? $"{info.Ip} · {modeText} · USB 有线优先"
+            : $"{info.Ip} · {modeText} · 数据 {info.Bridge}";
     }
 
     /// Quota lines & ring exactly as the firmware computes them from /status.
