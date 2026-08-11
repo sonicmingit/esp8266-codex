@@ -14,7 +14,7 @@
 <p align="center">
   <a href="https://mac.qust.me">Website</a> ·
   <a href="https://mac.qust.me/#flash">Web Flasher</a> ·
-  <a href="https://github.com/pengchujin/esp8266-ai/releases/latest">Download</a>
+  <a href="https://github.com/sonicmingit/esp8266-codex/releases/latest">Download</a>
 </p>
 
 <p align="center">
@@ -23,6 +23,11 @@
 
 A retro mini-TV with a 240×240 screen that sits on your desk showing **what Claude Code / Codex CLI are doing right now and how much quota you have left**. No API key needed: everything comes from the CLI credentials and session logs already on your machine, served to the device over your LAN by the companion Mac / Windows bridge app.
 
+## Fork and attribution
+
+This repository is a personal fork of [pengchujin/esp8266-ai](https://github.com/pengchujin/esp8266-ai). The original source code, hardware design, product direction and upstream contributions belong to the original author and upstream repository. This fork is maintained by sonicmingit for personal use and does not represent the upstream author.
+
+This branch merges selected upstream PR improvements and adds a Windows USB-first serial bridge. It is a self-use update, not a claim of ownership over the upstream project. See [NOTICE.md](NOTICE.md) and the [upgrade notes](docs/PR-UPGRADE-2026-08-11.md).
 ## Features
 
 | | |
@@ -42,7 +47,7 @@ Open **[mac.qust.me/#flash](https://mac.qust.me/#flash)** in Chrome / Edge, plug
 
 > Serial port not showing up? On Windows install the [CH340 driver](https://www.wch.cn/downloads/CH341SER_EXE.html); macOS has it built in. Try another USB cable (many are charge-only). More troubleshooting in the [website FAQ](https://mac.qust.me/#flash-faq).
 >
-> Command-line folks can also flash `esp8266-ai-firmware-*.bin` from [Releases](https://github.com/pengchujin/esp8266-ai/releases/latest) to address `0x0` with esptool.
+> Command-line folks can also flash `esp8266-ai-firmware-*.bin` from [Releases](https://github.com/sonicmingit/esp8266-codex/releases/latest) to address `0x0` with esptool.
 
 ### Step 2 · Connect WiFi
 
@@ -50,7 +55,7 @@ On first boot the device opens a hotspot named **`AI-Clock-Setup`**: join it fro
 
 ### Step 3 · Install the bridge app
 
-Download from [Releases](https://github.com/pengchujin/esp8266-ai/releases/latest) and open:
+Download from [Releases](https://github.com/sonicmingit/esp8266-codex/releases/latest) and open:
 
 - **macOS**: `AIClockBridge-*-macOS.dmg`, drag into Applications (ad-hoc signed; on first launch allow it in "System Settings → Privacy & Security" and grant local-network access)
 - **Windows**: `AIClockBridge-*-Windows-x64.exe`, just double-click
@@ -63,6 +68,9 @@ The bridge lives in your menu bar / tray and **auto-discovers and pairs** with t
 
 Daily use is all on the tray icon: **left-click** opens a live mirror of the device screen (with a brightness slider at the bottom), **right-click** opens the full menu (quota details, screen switching, pet swapping, music/network pages, and more).
 
+<p align="center">
+  <img src="docs/screenshots/windows-client-usb-priority.png" width="600" alt="Windows client USB-first tray menu">
+</p>
 ## FAQ
 
 - **Screen border flashing red**: the device can't reach the bridge — make sure the app is running and on the same WiFi.

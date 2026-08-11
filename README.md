@@ -14,7 +14,7 @@
 <p align="center">
   <a href="https://mac.qust.me">官网</a> ·
   <a href="https://mac.qust.me/#flash">网页刷机</a> ·
-  <a href="https://github.com/pengchujin/esp8266-ai/releases/latest">下载</a>
+  <a href="https://github.com/sonicmingit/esp8266-codex/releases/latest">下载</a>
 </p>
 
 <p align="center">
@@ -23,6 +23,19 @@
 
 一块 240×240 的复古小电视，放在桌上实时显示 **Claude Code / Codex CLI 在干什么、额度还剩多少**。不需要任何 API key：数据来自本机已有的 CLI 登录凭据和会话日志，由配套的 Mac / Windows 桥接程序提供给设备；Windows 版还支持 USB 有线优先，拔线后自动回退局域网。
 
+## 项目归属与复刻说明
+
+本仓库复刻自 [pengchujin/esp8266-ai](https://github.com/pengchujin/esp8266-ai)，源码、硬件设计和原始项目贡献归属于原作者及上游仓库。本仓库是 sonicmingit 的个人自用修改分支，不改变上游项目的归属，也不代表上游作者。
+
+本分支主要做了以下简单更新：
+
+- 合并并整理上游 Pull Request #2、#10、#11、#16、#19、#21 中适合本设备的修复与功能。
+- Windows 客户端增加 CH340/CH343 USB 串口自动识别、#HELLO/#DEVICE 握手、USB 有线优先、断线回退 Wi-Fi/LAN。
+- Windows 客户端通过串口推送额度、状态、网速和股票数据，显示模式与亮度命令优先走 USB。
+- ESP8266 固件与 Windows 客户端版本统一为 0.4.2-sonic，并提供可刷写固件和 Windows 单文件客户端。
+- 仍保留原项目的 Mac 客户端、网页配置、桌宠和音乐等功能范围；纯 USB 模式下部分需要 HTTP/二进制资源的功能不启用。
+
+许可证、版权和第三方依赖条款请以 [上游项目](https://github.com/pengchujin/esp8266-ai) 为准，详见 [NOTICE.md](NOTICE.md)。
 ## 功能
 
 | | |
@@ -42,7 +55,7 @@
 
 > 弹窗里看不到串口？Windows 需要装 [CH340 驱动](https://www.wch.cn/downloads/CH341SER_EXE.html)，Mac 系统自带无需安装；换根 USB 线（很多线只能充电）；更多排查见[官网 FAQ](https://mac.qust.me/#flash-faq)。
 >
-> 命令行党也可以用 esptool 把 [Releases](https://github.com/pengchujin/esp8266-ai/releases/latest) 里的 `esp8266-ai-firmware-*.bin` 刷到 `0x0`。
+> 命令行党也可以用 esptool 把 [Releases](https://github.com/sonicmingit/esp8266-codex/releases/latest) 里的 `esp8266-ai-firmware-*.bin` 刷到 `0x0`。
 
 ### 第 2 步 · 配 WiFi
 
@@ -50,7 +63,7 @@
 
 ### 第 3 步 · 装桥接程序
 
-从 [Releases](https://github.com/pengchujin/esp8266-ai/releases/latest) 下载并打开：
+从 [Releases](https://github.com/sonicmingit/esp8266-codex/releases/latest) 下载并打开：
 
 - **macOS**：`AIClockBridge-*-macOS.dmg`，拖入 Applications（ad-hoc 签名，首次启动需在「系统设置 → 隐私与安全性」允许，并同意本地网络权限）
 - **Windows**：`AIClockBridge-*-Windows-x64.exe`，双击即用；USB 连接 SD2 时自动使用有线数据通道，未插线时使用局域网
@@ -63,6 +76,13 @@
 
 日常使用都在托盘图标上：**左键**打开设备画面的实时镜像（底部有屏幕亮度滑条），**右键**是完整菜单（额度详情、屏幕切换、更换桌宠、音乐/网速页等）。
 
+### Windows 客户端截图
+
+Windows 客户端在检测到 SD2 后会优先显示 USB 串口连接、COM 端口和固件版本；USB 断开后自动回退局域网。
+
+<p align="center">
+  <img src="docs/screenshots/windows-client-usb-priority.png" width="600" alt="Windows 客户端 USB 有线优先托盘菜单">
+</p>
 ## 常见问题
 
 - **屏幕边框红色闪烁**：设备连不上桥接程序——确认电脑端程序在运行、和设备在同一 WiFi。

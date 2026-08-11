@@ -12,3 +12,29 @@ dist/
 # gen_vlw.py scratch output (headers are committed, these are not)
 tools/fontcheck/
 tools/fonts/*.vlw
+
+# IDE / editor metadata
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+*.userprefs
+
+# Build and packaging output
+output/
+release/
+windows-app/**/publish/
+firmware/.pioenvs/
+firmware/.cache/
+*.elf
+*.map
+*.hex
+*.uf2
+*.log
+
+# Local configuration and secrets
+.env
+.env.*
+*.local
+*.local.json
