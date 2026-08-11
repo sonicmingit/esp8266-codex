@@ -10,8 +10,6 @@ namespace AIClockBridge;
 // pet picker window uses): AIClockBridge --test-pet <slug> <claude|codex> <host>
 static class Program
 {
-    const int Port = 8765;
-
     [STAThread]
     static void Main(string[] args)
     {
@@ -22,6 +20,10 @@ static class Program
         }
 
         ApplicationConfiguration.Initialize();
+
+        // Default 8765; override with `--port N`, AICLOCK_PORT or the tray item
+        // when something else already owns the port (see BridgePort).
+        int Port = BridgePort.Resolve(args);
 
         var service = new StatusService();
         var usage = new UsageFetcher();
@@ -109,7 +111,14 @@ static class Program
             }
             catch (Exception e)
             {
-                Console.Error.WriteLine($"[bridge] failed to apply network binding: {e.Message}");
+                // This is a tray-only app, so a listener failure must be visible.
+                // It may be a port collision or a selected adapter that vanished.
+                Console.Error.WriteLine($"[bridge] failed to bind port {Port}: {e.Message}");
+                MessageBox.Show(
+                    $"无法在本机端口 {Port} 启动桥接服务。端口可能被其他软件占用（常见的是百度输入法 baidupinyin.exe），或者当前选择的网卡已经不可用。\n\n"
+                    + "请在托盘菜单中更换“服务端口…”或“绑定网卡”，重开本程序后再点一次“把本机设为设备桥接”。\n\n"
+                    + $"系统提示：{e.Message}",
+                    "桥接服务启动失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
         NetworkBinding.Changed += ApplyNetworkBinding;
