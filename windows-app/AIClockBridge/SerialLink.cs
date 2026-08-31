@@ -27,6 +27,7 @@ sealed class SerialLink : IDisposable
     string _firmwareVersion = "";
     string _displayMode = "auto";
     int _brightness = 100;
+    bool _usbWifiOff;
     DateTime _openedAt = DateTime.MinValue;
     DateTime _lastHelloAt = DateTime.MinValue;
     DateTime _lastStatusAt = DateTime.MinValue;
@@ -255,6 +256,7 @@ sealed class SerialLink : IDisposable
     void HandleDeviceLine(string line)
     {
         var version = "";
+        var usbWifiOff = false;
         var jsonStart = line.IndexOf('{');
         if (jsonStart >= 0)
         {
@@ -262,6 +264,9 @@ sealed class SerialLink : IDisposable
             {
                 using var doc = JsonDocument.Parse(line[jsonStart..]);
                 if (doc.RootElement.TryGetProperty("fw", out var fw)) version = fw.GetString() ?? "";
+                if (doc.RootElement.TryGetProperty("usb_wifi_off", out var wifi)
+                    && (wifi.ValueKind == JsonValueKind.True || wifi.ValueKind == JsonValueKind.False))
+                    usbWifiOff = wifi.GetBoolean();
             }
             catch { }
         }
@@ -275,6 +280,7 @@ sealed class SerialLink : IDisposable
                 changed = true;
             }
             _firmwareVersion = version;
+            _usbWifiOff = usbWifiOff;
         }
         if (!changed) return;
         _lastStatusAt = DateTime.MinValue;
@@ -326,6 +332,8 @@ sealed class SerialLink : IDisposable
                 _displayMode = mode;
             if (command.TryGetValue("brightness", out var brightness))
                 _brightness = Convert.ToInt32(brightness);
+            if (command.TryGetValue("usb_wifi_off", out var usbWifiOff))
+                _usbWifiOff = Convert.ToBoolean(usbWifiOff);
         }
         return true;
     }
@@ -337,6 +345,7 @@ sealed class SerialLink : IDisposable
     {
         string port, mode, firmware;
         int brightness;
+        bool usbWifiOff;
         lock (_gate)
         {
             if (!_linked) return null;
@@ -344,6 +353,7 @@ sealed class SerialLink : IDisposable
             mode = _displayMode;
             firmware = _firmwareVersion;
             brightness = _brightness;
+            usbWifiOff = _usbWifiOff;
         }
         var snap = _service.Snapshot();
         var showing = mode == "codex" ? "codex" : "claude";
@@ -360,6 +370,7 @@ sealed class SerialLink : IDisposable
             LastUpdateS = 0,
             Brightness = brightness,
             Wired = true,
+            UsbWifiOff = usbWifiOff,
             FirmwareVersion = firmware,
         };
     }
@@ -377,6 +388,7 @@ sealed class SerialLink : IDisposable
             _port = null;
             _portName = "";
             _firmwareVersion = "";
+            _usbWifiOff = false;
             _linked = false;
             _rx.Clear();
         }

@@ -88,6 +88,34 @@ enum DisplayMode {
 };
 DisplayMode displayMode = MODE_AUTO;
 
+const char *displayModeName(DisplayMode m) {
+  if (m == MODE_CLAUDE) return "claude";
+  if (m == MODE_CODEX) return "codex";
+  if (m == MODE_NET) return "net";
+  if (m == MODE_MUSIC) return "music";
+  if (m == MODE_STOCK) return "stock";
+  if (m == MODE_DUAL) return "dual";
+  return "auto";
+}
+
+bool setDisplayModeByName(String mode) {
+  mode.trim();
+  if (mode == "auto") displayMode = MODE_AUTO;
+  else if (mode == "claude") displayMode = MODE_CLAUDE;
+  else if (mode == "codex") displayMode = MODE_CODEX;
+  else if (mode == "net") displayMode = MODE_NET;
+  else if (mode == "music") displayMode = MODE_MUSIC;
+  else if (mode == "stock") displayMode = MODE_STOCK;
+  else if (mode == "dual") displayMode = MODE_DUAL;
+  else return false;
+  return true;
+}
+
+// Wi-Fi stays available on ordinary power-up, but is switched off after a
+// Windows bridge completes the USB handshake when this setting is enabled.
+bool usbWifiOffWhenWired = false;
+bool wifiDisabledForWiredLink = false;
+
 // When AUTO and the Mac reports audio playing, the screen auto-switches to the
 // music page and back when it stops — same spirit as the Claude/Codex auto
 // switch. Only AUTO does this; a pinned mode is always honored as-is.
@@ -230,6 +258,53 @@ void saveBrightness() {
   if (!f) return;
   f.println(brightness);
   f.close();
+}
+
+// ---------- persistence for display and wired Wi-Fi settings ----------
+
+void loadDisplayMode() {
+  if (!LittleFS.exists(DISPLAY_MODE_FILE)) return;
+  File f = LittleFS.open(DISPLAY_MODE_FILE, "r");
+  if (!f) return;
+  String mode = f.readStringUntil('\n');
+  f.close();
+  if (!setDisplayModeByName(mode)) displayMode = MODE_AUTO;
+}
+
+void saveDisplayMode() {
+  File f = LittleFS.open(DISPLAY_MODE_FILE, "w");
+  if (!f) return;
+  f.println(displayModeName(displayMode));
+  f.close();
+}
+
+void loadUsbWifiOffWhenWired() {
+  if (!LittleFS.exists(USB_WIFI_OFF_FILE)) return;
+  File f = LittleFS.open(USB_WIFI_OFF_FILE, "r");
+  if (!f) return;
+  String value = f.readStringUntil('\n');
+  f.close();
+  value.trim();
+  usbWifiOffWhenWired = (value == "1" || value == "true");
+}
+
+void saveUsbWifiOffWhenWired() {
+  File f = LittleFS.open(USB_WIFI_OFF_FILE, "w");
+  if (!f) return;
+  f.println(usbWifiOffWhenWired ? "1" : "0");
+  f.close();
+}
+
+void disableWifiForWiredLink() {
+  if (!usbWifiOffWhenWired || wifiDisabledForWiredLink) return;
+  wifiDisabledForWiredLink = true;
+  if (webServerStarted) {
+    webServer.stop();
+    webServerStarted = false;
+  }
+  WiFi.disconnect();
+  WiFi.mode(WIFI_OFF);
+  Serial.println("[wifi] disabled for active USB link");
 }
 
 // ---------- persistence for the bridge host ----------
@@ -1820,7 +1895,9 @@ void handleSerialFrame(char *line) {
   lastSerialFrameMs = millis();
   wiredEverLinked = true;
   if (!strncmp(line, "#HELLO", 6)) {
-    Serial.printf("#DEVICE {\"name\":\"aiclock\",\"fw\":\"%s\"}\n", FW_VERSION);
+    Serial.printf("#DEVICE {\"name\":\"aiclock\",\"fw\":\"%s\",\"usb_wifi_off\":%s}\n",
+                  FW_VERSION, usbWifiOffWhenWired ? "true" : "false");
+    disableWifiForWiredLink();
     return;
   }
   if (!strncmp(line, "#STATUS ", 8)) {
@@ -1856,15 +1933,13 @@ void handleSerialFrame(char *line) {
     }
     const char *mode = doc["display"] | (const char *)nullptr;
     if (mode) {
-      String m(mode);
-      if (m == "auto") displayMode = MODE_AUTO;
-      else if (m == "claude") displayMode = MODE_CLAUDE;
-      else if (m == "codex") displayMode = MODE_CODEX;
-      else if (m == "net") displayMode = MODE_NET;
-      else if (m == "music") displayMode = MODE_MUSIC;
-      else if (m == "dual") displayMode = MODE_DUAL;
-      else if (m == "stock") displayMode = MODE_STOCK;
+      if (setDisplayModeByName(String(mode))) saveDisplayMode();
       // the effectiveMode transition handler in loop() repaints the chrome
+    }
+    if (doc["usb_wifi_off"].is<bool>()) {
+      usbWifiOffWhenWired = doc["usb_wifi_off"].as<bool>();
+      saveUsbWifiOffWhenWired();
+      disableWifiForWiredLink();
     }
     return;
   }
@@ -1981,16 +2056,6 @@ void handleSave() {
 
 // ---------- JSON API for the Mac app ----------
 
-const char *displayModeName(DisplayMode m) {
-  if (m == MODE_CLAUDE) return "claude";
-  if (m == MODE_CODEX) return "codex";
-  if (m == MODE_NET) return "net";
-  if (m == MODE_MUSIC) return "music";
-  if (m == MODE_STOCK) return "stock";
-  if (m == MODE_DUAL) return "dual";
-  return "auto";
-}
-
 void handleApiInfo() {
   JsonDocument doc;
   doc["ip"] = WiFi.localIP().toString();
@@ -2004,6 +2069,7 @@ void handleApiInfo() {
   doc["sprite_rev"] = spriteRev;
   doc["brightness"] = brightness;
   doc["wired"] = wiredActive(); // true = data currently arrives over USB serial
+  doc["usb_wifi_off"] = usbWifiOffWhenWired;
   doc["fw"] = FW_VERSION;
   JsonObject c = doc["claude"].to<JsonObject>();
   c["status"] = claudeStatus.status;
@@ -2022,17 +2088,11 @@ void handleApiInfo() {
 
 void handleApiDisplay() {
   String mode = webServer.arg("mode");
-  if (mode == "auto") displayMode = MODE_AUTO;
-  else if (mode == "claude") displayMode = MODE_CLAUDE;
-  else if (mode == "codex") displayMode = MODE_CODEX;
-  else if (mode == "net") displayMode = MODE_NET;
-  else if (mode == "music") displayMode = MODE_MUSIC;
-  else if (mode == "stock") displayMode = MODE_STOCK;
-  else if (mode == "dual") displayMode = MODE_DUAL;
-  else {
+  if (!setDisplayModeByName(mode)) {
     webServer.send(400, "text/plain", "mode must be auto|claude|codex|net|music|stock|dual");
     return;
   }
+  saveDisplayMode();
   Serial.printf("[api] display mode = %s\n", mode.c_str());
   if (displayMode == MODE_NET) {
     netChromeDrawn = false;
@@ -2049,6 +2109,19 @@ void handleApiDisplay() {
     updateActiveApp();
     drawActiveApp(); // unconditional: also repaints over a previous net chart
   }
+  webServer.send(200, "text/plain", "ok");
+}
+
+void handleApiUsbWifi() {
+  String enabled = webServer.arg("enabled");
+  enabled.trim();
+  if (enabled != "0" && enabled != "1" && enabled != "false" && enabled != "true") {
+    webServer.send(400, "text/plain", "enabled must be true|false");
+    return;
+  }
+  usbWifiOffWhenWired = (enabled == "1" || enabled == "true");
+  saveUsbWifiOffWhenWired();
+  Serial.printf("[api] USB WiFi off = %d\n", usbWifiOffWhenWired);
   webServer.send(200, "text/plain", "ok");
 }
 
@@ -2369,6 +2442,7 @@ void setupWebServer() {
   webServer.on("/reset-wifi", HTTP_POST, handleResetWifi);
   webServer.on("/api/info", HTTP_GET, handleApiInfo);
   webServer.on("/api/display", HTTP_POST, handleApiDisplay);
+  webServer.on("/api/usb-wifi", HTTP_POST, handleApiUsbWifi);
   webServer.on("/api/bridge", HTTP_POST, handleApiBridge);
   webServer.on("/api/brightness", HTTP_POST, handleApiBrightness);
   webServer.on("/sprite/claude/reset", HTTP_POST, []() { handleSpriteReset(APP_CLAUDE); });
@@ -2393,6 +2467,8 @@ void setup() {
   LittleFS.begin();
   loadBridgeHost();
   loadBrightness();
+  loadDisplayMode();
+  loadUsbWifiOffWhenWired();
   loadCustomSpriteState();
 
   tft.init();
@@ -2425,7 +2501,7 @@ void setup() {
 }
 
 void loop() {
-  wifiManager.process(); // keeps the config portal alive until WiFi is set up
+  if (!wifiDisabledForWiredLink) wifiManager.process(); // keeps the config portal alive until WiFi is set up
   pumpSerial();          // wired (USB) bridge frames
 
   if (!webServerStarted && WiFi.status() == WL_CONNECTED) {

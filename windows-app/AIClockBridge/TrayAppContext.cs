@@ -22,6 +22,7 @@ sealed class TrayAppContext : ApplicationContext
     readonly ToolStripMenuItem _connectionItem = new("连接：正在扫描 USB") { Enabled = false };
     readonly ToolStripMenuItem _deviceInfoItem = new("设备：未设置") { Enabled = false };
     readonly ToolStripMenuItem _networkMenu = new("绑定网卡");
+    readonly ToolStripMenuItem _usbWifiOffItem = new("USB 直连时关闭设备 Wi-Fi");
     readonly Dictionary<string, ToolStripMenuItem> _modeItems = new();
 
     public TrayAppContext(StatusService service, UsageFetcher usage, NetSpeedMonitor netMonitor,
@@ -86,11 +87,11 @@ sealed class TrayAppContext : ApplicationContext
         _menu.Items.Add(MakeItem("设置设备地址…", (_, _) => SetDeviceAddress()));
         _menu.Items.Add(MakeItem("打开设备网页", (_, _) => OpenDevicePage()));
 
-        var displayMenu = new ToolStripMenuItem("屏幕显示");
+        var displayMenu = new ToolStripMenuItem("屏幕显示（写入设备，重启保持）");
         foreach (var (title, mode) in new[]
         {
-            ("自动（谁在干活显示谁）", "auto"), ("固定 Claude", "claude"),
-            ("固定 Codex", "codex"), ("双栏额度", "dual"), ("网速曲线", "net"),
+            ("自动（谁在干活显示谁）", "auto"), ("固定 Claude（开机默认）", "claude"),
+            ("固定 Codex（开机默认）", "codex"), ("双栏额度", "dual"), ("网速曲线", "net"),
             ("音乐播放", "music"), ("股票行情", "stock"),
         })
         {
@@ -100,6 +101,9 @@ sealed class TrayAppContext : ApplicationContext
             displayMenu.DropDownItems.Add(item);
         }
         _menu.Items.Add(displayMenu);
+        _usbWifiOffItem.CheckOnClick = false;
+        _usbWifiOffItem.Click += async (_, _) => await SetUsbWifiOff(!_usbWifiOffItem.Checked);
+        _menu.Items.Add(_usbWifiOffItem);
         // (屏幕亮度在左键弹出的镜像页底部，做成滑条了)
 
         _menu.Items.Add(MakeItem("设置自选股…", (_, _) =>
@@ -268,6 +272,7 @@ sealed class TrayAppContext : ApplicationContext
         {
             _deviceInfoItem.Text = "设备：未设置地址";
             foreach (var item in _modeItems.Values) item.Checked = false;
+            _usbWifiOffItem.Checked = false;
             return;
         }
         _deviceInfoItem.Text = _serialLink.IsLinked
@@ -282,6 +287,7 @@ sealed class TrayAppContext : ApplicationContext
         {
             _deviceInfoItem.Text = $"设备：{host}（无法连接）";
             foreach (var item in _modeItems.Values) item.Checked = false;
+            _usbWifiOffItem.Checked = false;
             // self-heal: the device may have moved to a new DHCP address;
             // if it recently polled us from a different IP, adopt that.
             var seen = DeviceClient.LastSeenIp;
@@ -307,6 +313,7 @@ sealed class TrayAppContext : ApplicationContext
             ? $"设备：{transport} · 正在显示 {showing} · 有线优先"
             : $"设备：{transport} · 正在显示 {showing} · {string.Join(" ", sprites)}";
         foreach (var (mode, item) in _modeItems) item.Checked = mode == info.Mode;
+        _usbWifiOffItem.Checked = info.UsbWifiOff;
     }
 
     // MARK: - pairing
@@ -370,6 +377,23 @@ sealed class TrayAppContext : ApplicationContext
         catch (Exception e)
         {
             Toast("切换失败", e.Message);
+        }
+    }
+
+    async Task SetUsbWifiOff(bool enabled)
+    {
+        try
+        {
+            await DeviceClient.SetUsbWifiOff(enabled);
+            _usbWifiOffItem.Checked = enabled;
+            Toast("已写入设备", enabled
+                ? "USB 桥接握手成功后，设备会自动关闭 Wi-Fi。"
+                : "设备在 USB 桥接时会保留 Wi-Fi。");
+            await RefreshDeviceSection();
+        }
+        catch (Exception e)
+        {
+            Toast("设置失败", e.Message);
         }
     }
 

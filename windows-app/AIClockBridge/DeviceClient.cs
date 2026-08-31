@@ -21,6 +21,7 @@ class DeviceInfo
     public int SpriteRev;              // bumped by the device on animation change
     public int Brightness = 100;       // backlight 0-100 (0 = off)
     public bool Wired;                 // true when USB serial is the active path
+    public bool UsbWifiOff;            // disable Wi-Fi after a USB bridge handshake
     public string FirmwareVersion = "";
     public bool ClaudeCustomSprite;
     public bool CodexCustomSprite;
@@ -144,6 +145,7 @@ static class DeviceClient
                 Brightness = Int(root, "brightness", 100),
                 Showing = Str(root, "showing"),
                 Wired = Bool(root, "wired"),
+                UsbWifiOff = Bool(root, "usb_wifi_off"),
                 FirmwareVersion = Str(root, "fw"),
             };
             info.Effective = Str(root, "effective", info.Mode);
@@ -167,7 +169,8 @@ static class DeviceClient
         }
     }
 
-    /// USB #CMD first, otherwise POST /api/display; supports auto|claude|codex|dual|net|music|stock
+    /// USB #CMD first, otherwise POST /api/display. The firmware persists the
+    /// selected mode, so "固定 Codex" also becomes the next boot's default.
     public static Task SetDisplayMode(string mode)
     {
         if (SendWiredCommand?.Invoke(new Dictionary<string, object> { ["display"] = mode }) == true)
@@ -185,6 +188,17 @@ static class DeviceClient
         if (SendWiredCommand?.Invoke(new Dictionary<string, object> { ["brightness"] = level }) == true)
             return Task.CompletedTask;
         return PostForm("api/brightness", new() { ["level"] = level.ToString() });
+    }
+
+    /// Persist whether the device should turn Wi-Fi off after it is linked to
+    /// the Windows bridge over USB. USB is preferred; HTTP config remains a
+    /// fallback for a wireless device.
+    public static Task SetUsbWifiOff(bool enabled)
+    {
+        if (SendWiredCommand?.Invoke(new Dictionary<string, object>
+            { ["usb_wifi_off"] = enabled }) == true)
+            return Task.CompletedTask;
+        return PostForm("api/usb-wifi", new() { ["enabled"] = enabled ? "true" : "false" });
     }
 
     /// POST /sprite/{claude|codex}  multipart GIF upload — the device decodes

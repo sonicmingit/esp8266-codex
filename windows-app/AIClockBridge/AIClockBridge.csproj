@@ -16,7 +16,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>AIClockBridge</AssemblyName>
     <RootNamespace>AIClockBridge</RootNamespace>
-    <Version>0.4.2-sonic</Version>
+    <Version>0.4.3-sonic</Version>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
   </PropertyGroup>
 
