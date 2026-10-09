@@ -1,6 +1,6 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const state = { usage: null, settings: null, runtime: null, pets: [], selected: null, page: 0, total: 0, petLoaded: false };
+const state = { usage: null, settings: null, runtime: null, pets: [], selected: null, page: 0, total: 0, petLoaded: false, deviceTargetId: '', deviceStatuses: {} };
 const escapeHtml = value => { const node = document.createElement('span'); node.textContent = String(value ?? ''); return node.innerHTML; };
 let toastTimer, previewSequence = 0, petSearchSequence = 0, polling = false;
 function toast(message, error = false) { clearTimeout(toastTimer); $('toast').textContent = message; $('toast').className = `toast${error ? ' error' : ''}`; $('toast').hidden = false; toastTimer = setTimeout(() => $('toast').hidden = true, error ? 9000 : 5000); }
@@ -51,29 +51,73 @@ async function loadUsage() {
 }
 $('refresh').onclick = () => action($('refresh'), async () => { state.usage = await api('/api/usage/refresh', {}); renderUsage(); }, '查询完成。频繁点击会沿用缓存，接口限流时自动退避。');
 function updateModeHint() { $('mode-hint').textContent = $('codex-mode').value === 'managed' ? '需要已安装 Codex CLI，以及独立、可写且已登录的服务目录。请勿与正在使用的宿主机凭据共用。登录步骤见中文说明。' : '每次查询重新读取 auth.json。宿主机更新凭据后自动生效；此模式不会写入或续期凭据。'; }
+function deviceList() { return state.settings?.devices ?? []; }
+function renderDeviceTargets() {
+  const devices = deviceList();
+  if (!devices.some(device => device.id === state.deviceTargetId)) state.deviceTargetId = devices[0]?.id ?? '';
+  for (const id of ['device-target', 'pet-device']) {
+    const select = $(id);
+    select.replaceChildren(...(devices.length ? devices.map(device => new Option(`${device.name} · ${device.host}`, device.id)) : [new Option('请先添加设备', '')]));
+    select.value = state.deviceTargetId;
+    select.disabled = devices.length === 0;
+  }
+  for (const id of ['device-pair', 'set-display', 'set-brightness', 'pet-reset']) $(id).disabled = devices.length === 0;
+  $('pet-apply').disabled = !state.selected || !devices.length || $('pet-preview').hidden;
+}
+function renderDeviceList() {
+  const devices = deviceList();
+  if (!devices.length) { $('device-list').innerHTML = '<p class="empty-devices">还没有添加小屏幕。填写设备名称和 IP 后即可连接。</p>'; return; }
+  $('device-list').innerHTML = devices.map((device, index) => `<article class="device-row" data-device-index="${index}"><div class="device-row-fields"><label>设备名称<input data-device-field="name" maxlength="50" required></label><label>IP 地址<input data-device-field="host" autocomplete="off" required></label></div><div class="device-row-actions"><span class="device-status" data-device-status>${escapeHtml(state.deviceStatuses[device.id] ?? '尚未测试连接')}</span><button class="button" data-device-action="test">测试</button><button class="button" data-device-action="pair">配对</button><button class="button" data-device-action="save">保存</button><button class="text-button danger-button" data-device-action="delete">移除</button></div></article>`).join('');
+  document.querySelectorAll('.device-row').forEach(row => {
+    const device = devices[Number(row.dataset.deviceIndex)];
+    row.querySelector('[data-device-field="name"]').value = device.name;
+    row.querySelector('[data-device-field="host"]').value = device.host;
+    const route = action => `/api/devices/${encodeURIComponent(device.id)}/${action}`;
+    row.querySelector('[data-device-action="test"]').onclick = buttonEvent => action(buttonEvent.currentTarget, async () => {
+      const info = await api(route('info'));
+      state.deviceTargetId = device.id; renderDeviceTargets();
+      const status = `已连接 · ${info.ip || device.host}${info.fw ? ` · ${info.fw}` : ''}`;
+      if (['auto', 'codex', 'claude', 'dual'].includes(info.mode)) $('display-mode').value = info.mode;
+      if (Number.isFinite(info.brightness)) { $('brightness').value = info.brightness; $('brightness-value').textContent = `${info.brightness}%`; }
+      state.deviceStatuses[device.id] = status; row.querySelector('[data-device-status]').textContent = status;
+    }, '设备连接正常。');
+    row.querySelector('[data-device-action="pair"]').onclick = buttonEvent => action(buttonEvent.currentTarget, () => api(route('pair'), {}), `“${device.name}”已指向本服务。`);
+    row.querySelector('[data-device-action="save"]').onclick = buttonEvent => action(buttonEvent.currentTarget, async () => {
+      await api(route('update'), { name: row.querySelector('[data-device-field="name"]').value.trim(), host: row.querySelector('[data-device-field="host"]').value.trim() });
+      delete state.deviceStatuses[device.id]; await loadSettings();
+    }, '设备信息已保存。');
+    row.querySelector('[data-device-action="delete"]').onclick = buttonEvent => action(buttonEvent.currentTarget, async () => {
+      await api(route('delete'), {}); delete state.deviceStatuses[device.id]; await loadSettings();
+    }, `“${device.name}”已移除。`);
+  });
+}
+function renderDevices() { renderDeviceTargets(); renderDeviceList(); }
 async function loadSettings() {
   const data = await api('/api/settings'); state.settings = data.settings; state.runtime = data.runtime; const s = data.settings;
-  $('device-host').value = s.deviceHost; $('advertised-host').value = s.advertisedHost; $('port').value = data.runtime.portFromEnvironment || data.runtime.docker ? data.runtime.port : s.port;
-  $('refresh-seconds').value = s.refreshSeconds; $('codex-enabled').checked = s.codexEnabled; $('claude-enabled').checked = s.claudeEnabled;
+  $('advertised-host').value = s.advertisedHost; $('port').value = data.runtime.portFromEnvironment || data.runtime.docker ? data.runtime.port : s.port;
+  $('refresh-minutes').value = Number((s.refreshSeconds / 60).toFixed(2)); $('codex-enabled').checked = s.codexEnabled; $('claude-enabled').checked = s.claudeEnabled;
   $('codex-home').value = s.codexHome; $('claude-home').value = s.claudeHome; $('codex-mode').value = s.codexMode;
   $('port').disabled = data.runtime.portFromEnvironment || data.runtime.docker;
   $('port-hint').textContent = data.runtime.docker ? `容器内部监听 ${data.runtime.port}。对外端口在 Compose 的 AICLOCK_HOST_PORT 中修改，然后重新创建容器。`
     : data.runtime.portFromEnvironment ? `当前由 AICLOCK_PORT 指定监听 ${data.runtime.port}，环境变量优先于网页设置。` : `当前监听 ${data.runtime.port}。修改端口后重启服务，并同步设备可访问的服务地址。`;
-  updateModeHint();
+  updateModeHint(); renderDevices();
 }
 $('codex-mode').onchange = updateModeHint;
 $('settings-form').onsubmit = event => { event.preventDefault(); action($('save-settings'), async () => {
-  const result = await api('/api/settings', { port: $('port').disabled ? state.settings.port : Number($('port').value), deviceHost: $('device-host').value.trim(), advertisedHost: $('advertised-host').value.trim(), refreshSeconds: Number($('refresh-seconds').value), codexEnabled: $('codex-enabled').checked, claudeEnabled: $('claude-enabled').checked, codexMode: $('codex-mode').value, codexHome: $('codex-home').value.trim(), claudeHome: $('claude-home').value.trim() });
+  const result = await api('/api/settings', { port: $('port').disabled ? state.settings.port : Number($('port').value), deviceHost: '', devices: state.settings.devices, advertisedHost: $('advertised-host').value.trim(), refreshSeconds: Math.round(Number($('refresh-minutes').value) * 60), codexEnabled: $('codex-enabled').checked, claudeEnabled: $('claude-enabled').checked, codexMode: $('codex-mode').value, codexHome: $('codex-home').value.trim(), claudeHome: $('claude-home').value.trim() });
   await loadSettings(); await loadUsage(); toast(result.restartRequired ? '设置已保存。监听端口需重启服务后生效，请同步更新设备服务地址。' : '设置已保存，后台将按刷新间隔查询。');
 }); };
-$('device-test').onclick = () => action($('device-test'), async () => { const info = await api('/api/device'); $('device-status').textContent = `已连接 · ${info.ip || state.settings.deviceHost}${info.fw ? ` · ${info.fw}` : ''}`;
-  if (['auto','codex','claude','dual'].includes(info.mode)) $('display-mode').value = info.mode;
-  if (Number.isFinite(info.brightness)) { $('brightness').value = info.brightness; $('brightness-value').textContent = `${info.brightness}%`; }
-}, '设备连接正常。');
-$('device-pair').onclick = () => action($('device-pair'), () => api('/api/device/pair', {}), '已将设备桥接地址设为本服务。');
-$('set-display').onclick = () => action($('set-display'), () => api('/api/device/display', { mode: $('display-mode').value }), '显示模式已保存到设备。');
+function selectedDeviceId() { if (!state.deviceTargetId) throw new Error('请先添加并选择一台小屏幕。'); return state.deviceTargetId; }
+$('device-add-form').onsubmit = event => { event.preventDefault(); action($('add-device'), async () => {
+  const entry = await api('/api/devices', { name: $('new-device-name').value.trim(), host: $('new-device-host').value.trim() });
+  state.deviceTargetId = entry.id; $('new-device-name').value = ''; $('new-device-host').value = ''; await loadSettings();
+}, '小屏幕已添加。'); };
+$('device-target').onchange = () => { state.deviceTargetId = $('device-target').value; renderDeviceTargets(); };
+$('pet-device').onchange = () => { state.deviceTargetId = $('pet-device').value; renderDeviceTargets(); };
+$('device-pair').onclick = () => action($('device-pair'), () => api(`/api/devices/${encodeURIComponent(selectedDeviceId())}/pair`, {}), '已将所选设备指向本服务。');
+$('set-display').onclick = () => action($('set-display'), () => api(`/api/devices/${encodeURIComponent(selectedDeviceId())}/display`, { mode: $('display-mode').value }), '显示模式已保存到所选设备。');
 $('brightness').oninput = () => $('brightness-value').textContent = `${$('brightness').value}%`;
-$('set-brightness').onclick = () => action($('set-brightness'), () => api('/api/device/brightness', { level: Number($('brightness').value) }), '亮度已保存到设备。');
+$('set-brightness').onclick = () => action($('set-brightness'), () => api(`/api/devices/${encodeURIComponent(selectedDeviceId())}/brightness`, { level: Number($('brightness').value) }), '亮度已保存到所选设备。');
 async function loadPets(page) {
   const sequence = ++petSearchSequence; $('pet-list').innerHTML = '<p class="loading-message">正在加载 petdex 图库…</p>';
   try {
@@ -90,7 +134,7 @@ async function loadPets(page) {
 function preview() {
   if (!state.selected) return; const sequence = ++previewSequence; $('selected-pet').textContent = state.selected.displayName; $('selected-slug').textContent = state.selected.slug;
   $('preview-message').textContent = '正在准备动画…'; $('preview-message').hidden = false; $('pet-preview').hidden = true; $('pet-apply').disabled = true;
-  const image = new Image(); image.onload = () => { if (sequence !== previewSequence) return; $('pet-preview').src = image.src; $('pet-preview').hidden = false; $('preview-message').hidden = true; $('pet-apply').disabled = false; };
+  const image = new Image(); image.onload = () => { if (sequence !== previewSequence) return; $('pet-preview').src = image.src; $('pet-preview').hidden = false; $('preview-message').hidden = true; $('pet-apply').disabled = !state.deviceTargetId; };
   image.onerror = () => { if (sequence !== previewSequence) return; $('preview-message').textContent = '预览加载失败，请重新选择或稍后重试。'; };
   image.src = `/api/pets/${encodeURIComponent(state.selected.slug)}/preview?animation=${encodeURIComponent($('pet-animation').value)}&slot=${$('pet-slot').value}`;
 }
@@ -98,7 +142,7 @@ $('pet-slot').onchange = preview; $('pet-animation').onchange = preview;
 $('pet-search-button').onclick = () => loadPets(0);
 $('pet-search').onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); loadPets(0); } };
 $('pet-prev').onclick = () => loadPets(state.page - 1); $('pet-next').onclick = () => loadPets(state.page + 1);
-$('pet-apply').onclick = () => { if (!state.selected) return; action($('pet-apply'), () => api(`/api/pets/${encodeURIComponent(state.selected.slug)}/apply`, { slot: $('pet-slot').value, animation: $('pet-animation').value }), '宠物已上传并保存到小屏幕。'); };
-$('pet-reset').onclick = () => action($('pet-reset'), () => api('/api/pets/reset', { slot: $('pet-slot').value }), '已恢复该插槽的默认宠物。');
+$('pet-apply').onclick = () => { if (!state.selected) return; action($('pet-apply'), () => api(`/api/pets/${encodeURIComponent(state.selected.slug)}/apply`, { deviceId: selectedDeviceId(), slot: $('pet-slot').value, animation: $('pet-animation').value }), '宠物已上传并保存到所选小屏幕。'); };
+$('pet-reset').onclick = () => action($('pet-reset'), () => api('/api/pets/reset', { deviceId: selectedDeviceId(), slot: $('pet-slot').value }), '已在所选小屏幕恢复该插槽的默认宠物。');
 Promise.all([loadSettings(), loadUsage()]).catch(error => toast(error.message, true));
 setInterval(loadUsage, 5000);

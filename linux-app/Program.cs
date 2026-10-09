@@ -48,6 +48,37 @@ app.MapPost("/api/settings", (BridgeSettings next, QuotaService quota) =>
     settings.Save(next); quota.SettingsChanged();
     return Results.Ok(new { ok = true, restartRequired = !settings.PortFromEnvironment && next.Port != settings.EffectivePort });
 });
+app.MapGet("/api/devices", () => settings.Current.Devices);
+app.MapPost("/api/devices", (DeviceSaveRequest request) =>
+{
+    var current = settings.Current;
+    if (current.Devices.Count >= 16) throw new BridgeException("最多可以添加 16 个小屏幕。");
+    var entry = NormalizeDevice(request, Guid.NewGuid().ToString("N"));
+    if (current.Devices.Any(d => string.Equals(d.Host, entry.Host, StringComparison.OrdinalIgnoreCase))) throw new BridgeException("这个设备地址已经添加过了。");
+    settings.Save(current with { DeviceHost = "", Devices = [.. current.Devices, entry] });
+    return Results.Ok(entry);
+});
+app.MapPost("/api/devices/{id}/update", (string id, DeviceSaveRequest request) =>
+{
+    var current = settings.Current;
+    if (!current.Devices.Any(d => d.Id == id)) throw new BridgeException("找不到这个小屏幕，请刷新页面后重试。");
+    var entry = NormalizeDevice(request, id);
+    if (current.Devices.Any(d => d.Id != id && string.Equals(d.Host, entry.Host, StringComparison.OrdinalIgnoreCase))) throw new BridgeException("这个设备地址已经添加过了。");
+    settings.Save(current with { DeviceHost = "", Devices = current.Devices.Select(d => d.Id == id ? entry : d).ToList() });
+    return Results.Ok(entry);
+});
+app.MapPost("/api/devices/{id}/delete", (string id) =>
+{
+    var current = settings.Current;
+    if (!current.Devices.Any(d => d.Id == id)) throw new BridgeException("找不到这个小屏幕，请刷新页面后重试。");
+    settings.Save(current with { DeviceHost = "", Devices = current.Devices.Where(d => d.Id != id).ToList() });
+    return Results.Ok(new { ok = true });
+});
+app.MapGet("/api/devices/{id}/info", (string id, DeviceService device, CancellationToken ct) => device.Info(id, ct));
+app.MapPost("/api/devices/{id}/pair", async (string id, DeviceService device, CancellationToken ct) => { await device.Pair(id, ct); return Results.Ok(new { ok = true }); });
+app.MapPost("/api/devices/{id}/display", async (string id, DisplayRequest request, DeviceService device, CancellationToken ct) => { await device.Display(id, request.Mode, ct); return Results.Ok(new { ok = true }); });
+app.MapPost("/api/devices/{id}/brightness", async (string id, BrightnessRequest request, DeviceService device, CancellationToken ct) => { await device.Brightness(id, request.Level, ct); return Results.Ok(new { ok = true }); });
+// Retain the original single-device endpoints for existing integrations.
 app.MapGet("/api/device", (DeviceService device, CancellationToken ct) => device.Info(ct));
 app.MapPost("/api/device/pair", async (DeviceService device, CancellationToken ct) => { await device.Pair(ct); return Results.Ok(new { ok = true }); });
 app.MapPost("/api/device/display", async (DisplayRequest request, DeviceService device, CancellationToken ct) => { await device.Display(request.Mode, ct); return Results.Ok(new { ok = true }); });
@@ -60,11 +91,22 @@ app.MapGet("/api/pets", async (string? search, int? page, PetdexService pets, Ca
 });
 app.MapGet("/api/pets/{slug}/preview", async (string slug, string? animation, string? slot, PetdexService pets, CancellationToken ct) => Results.File(await pets.Gif(slug, animation ?? "idle", slot ?? "codex", ct), "image/gif"));
 app.MapPost("/api/pets/{slug}/apply", async (string slug, PetRequest request, PetdexService pets, DeviceService device, CancellationToken ct) =>
-{ var gif = await pets.Gif(slug, request.Animation, request.Slot, ct); await device.Upload(request.Slot, gif, ct); return Results.Ok(new { ok = true }); });
-app.MapPost("/api/pets/reset", async (SlotRequest request, DeviceService device, CancellationToken ct) => { await device.Reset(request.Slot, ct); return Results.Ok(new { ok = true }); });
+{ var gif = await pets.Gif(slug, request.Animation, request.Slot, ct); await device.Upload(request.DeviceId, request.Slot, gif, ct); return Results.Ok(new { ok = true }); });
+app.MapPost("/api/pets/reset", async (SlotRequest request, DeviceService device, CancellationToken ct) => { await device.Reset(request.DeviceId, request.Slot, ct); return Results.Ok(new { ok = true }); });
+
+static DeviceEntry NormalizeDevice(DeviceSaveRequest request, string id)
+{
+    var name = request.Name?.Trim() ?? "";
+    var host = request.Host?.Trim() ?? "";
+    if (name.Length is < 1 or > 50) throw new BridgeException("小屏幕名称不能为空，且最多 50 个字符。");
+    SettingsStore.ValidateHost(host);
+    return new DeviceEntry(id, name, host);
+}
+
 app.Run();
 
 record DisplayRequest(string Mode);
 record BrightnessRequest(int Level);
-record PetRequest(string Animation, string Slot);
-record SlotRequest(string Slot);
+record DeviceSaveRequest(string Name, string Host);
+record PetRequest(string Animation, string Slot, string DeviceId);
+record SlotRequest(string Slot, string DeviceId);

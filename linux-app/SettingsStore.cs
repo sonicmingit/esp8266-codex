@@ -21,6 +21,10 @@ public sealed class SettingsStore
         try { current = JsonSerializer.Deserialize<BridgeSettings>(File.ReadAllText(path), JsonValues.Options) ?? new(); }
         catch (FileNotFoundException) { current = new(); }
         catch (JsonException) { throw new BridgeException("settings.json 格式错误，请修复配置文件后重启。"); }
+        if (current.Devices is null) current = current with { Devices = [] };
+        // Keep existing single-screen installations working after upgrading.
+        if (current.Devices.Count == 0 && !string.IsNullOrWhiteSpace(current.DeviceHost))
+            current = current with { Devices = [new DeviceEntry("legacy", "小屏幕 1", current.DeviceHost)] };
         // Directory overrides seed the first run only; later edits in the page persist.
         if (!File.Exists(path)) current = current with
         {
@@ -57,14 +61,26 @@ public sealed class SettingsStore
 
     public static void Validate(BridgeSettings s)
     {
-        if (s.DeviceHost == null || s.AdvertisedHost == null) throw new BridgeException("设备与服务地址不能为 null，未设置时请留空。");
+        if (s.DeviceHost == null || s.AdvertisedHost == null || s.Devices == null) throw new BridgeException("设备与服务地址不能为 null，未设置时请留空。");
         if (s.Port is < 1 or > 65535) throw new BridgeException("端口必须是 1～65535。");
-        if (s.RefreshSeconds is < 60 or > 3600) throw new BridgeException("刷新间隔必须在 60～3600 秒之间。");
+        if (s.RefreshSeconds is < 60 or > 86400) throw new BridgeException("刷新间隔必须在 1～1440 分钟之间。");
         if (s.CodexMode is not ("readonly" or "managed")) throw new BridgeException("Codex 模式必须是 readonly 或 managed。");
+        if (s.Devices.Count > 16) throw new BridgeException("最多可以添加 16 个小屏幕。");
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        var hosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var device in s.Devices)
+        {
+            if (device is null || device.Name is null || device.Host is null) throw new BridgeException("小屏幕配置不完整，请删除后重新添加。");
+            if (string.IsNullOrWhiteSpace(device.Id) || device.Id.Length > 64 || (device.Id != "legacy" && !Guid.TryParseExact(device.Id, "N", out _)))
+                throw new BridgeException("小屏幕标识无效，请删除后重新添加。");
+            if (!ids.Add(device.Id)) throw new BridgeException("小屏幕标识重复。");
+            if (string.IsNullOrWhiteSpace(device.Name) || device.Name.Trim().Length > 50) throw new BridgeException("小屏幕名称不能为空，且最多 50 个字符。");
+            if (!hosts.Add(device.Host.Trim())) throw new BridgeException("同一个设备地址不能重复添加。");
+            ValidateHost(device.Host);
+        }
         foreach (var path in new[] { s.CodexHome, s.ClaudeHome })
             if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path))
                 throw new BridgeException("凭据目录必须是绝对路径，不能填写 ~。");
-        if (!string.IsNullOrEmpty(s.DeviceHost)) ValidateHost(s.DeviceHost);
         if (!string.IsNullOrEmpty(s.AdvertisedHost)) ValidateHost(s.AdvertisedHost);
     }
 

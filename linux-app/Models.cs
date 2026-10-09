@@ -5,7 +5,9 @@ namespace AIClockBridge.Linux;
 public sealed record BridgeSettings
 {
     public int Port { get; init; } = 8765;
+    // Kept to migrate settings created by the initial single-device bridge.
     public string DeviceHost { get; init; } = "";
+    public List<DeviceEntry> Devices { get; init; } = [];
     public string AdvertisedHost { get; init; } = "";
     public bool CodexEnabled { get; init; } = true;
     public bool ClaudeEnabled { get; init; }
@@ -14,6 +16,8 @@ public sealed record BridgeSettings
     public string ClaudeHome { get; init; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude");
     public int RefreshSeconds { get; init; } = 120;
 }
+
+public sealed record DeviceEntry(string Id, string Name, string Host);
 
 public sealed record QuotaWindow(double UsedPercent, int WindowMinutes, long? ResetsAt);
 public sealed record UsageState

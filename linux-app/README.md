@@ -8,7 +8,8 @@
 - **Codex 两种模式**：只读映射已有凭据；或使用独立目录，通过 Codex App Server 查询额度并按需续期。
 - **Claude 只读模式**：读取现有 Claude Code 的订阅登录凭据。凭据失效时在宿主机重新登录。
 - **petdex**：搜索、分页、九种动画预览、上传到 Claude/Codex 插槽、恢复默认宠物。
-- **基础设置**：设备地址、对外服务地址、监听端口、刷新间隔、凭据目录、显示模式和亮度。
+- **多屏幕管理**：添加多台小屏幕，分别测试连接、配对，也可指定目标上传宠物和调整显示模式/亮度。
+- **基础设置**：对外服务地址、监听端口、可调额度刷新间隔（1 分钟至 24 小时）、凭据目录。
 
 不包含股票、音乐、网速、CPU/内存监控、USB 串口、工作状态日志采集。服务只显示额度，`/status` 中状态为 idle/offline，宠物保持待机；不会为了刷新凭据调用模型或执行项目任务。
 
@@ -25,11 +26,10 @@ bash deploy.sh readonly
 
 浏览器打开 `http://电脑局域网IP:8765/`：
 
-1. 在“基础设置”填写小屏幕 IP，例如 `192.168.1.50`。
-2. 填写“设备可访问的服务地址”，例如 `192.168.1.20:8765`，这里是**宿主机**的局域网 IP，不是容器 IP。
-3. 确认 Codex 凭据目录为 `/credentials/codex`，模式为“只读映射”。按需开启 Claude，其目录是 `/credentials/claude`。
-4. 保存设置，再点击“测试设备连接”和“将设备指向本服务”。
-5. 切换到“额度概览”查看数据，或去“选择宠物”预览、上传动画。
+1. 在“基础设置”填写“设备可访问的服务地址”，例如 `192.168.1.20:8765`，这里是**宿主机**的局域网 IP，不是容器 IP。
+2. 在“已连接的小屏幕”添加每台屏幕的名称和 IP，可分别测试连接并配对。
+3. 按需设置额度刷新分钟数。确认 Codex 凭据目录为 `/credentials/codex`，模式为“只读映射”；Claude 目录是 `/credentials/claude`。
+4. 保存设置，切换到“额度概览”查看数据，或去“选择宠物”并选择目标屏幕后上传动画。
 
 设备也可通过自带网页手动将 Bridge host 设置为同一服务地址。现有固件的 `/status` 协议无需修改。电脑、容器和设备需能在局域网互相访问；无线客户端隔离会阻止设备连接。
 
@@ -167,7 +167,7 @@ journalctl -u aiclock --no-pager -n 50
 - Codex：只读模式读取 `<Codex目录>/auth.json` 的 `tokens.access_token`。必须是 ChatGPT 账号登录凭据；API Key 不提供订阅账户额度。若凭据存储在系统 keyring 中，需要配置 `cli_auth_credentials_store = "file"` 并重新登录生成文件。
 - Claude：读取 `<Claude目录>/.credentials.json` 的 `claudeAiOauth.accessToken`。本服务不读取 macOS Keychain，也不自动续期 Claude 凭据。
 - 额度百分比按接口实际窗口解析，不能假定所有账号始终都有“5 小时 + 每周”两个窗口。窗口缺失时不编造数值；重置倒计时使用服务端返回的绝对时间。
-- 默认每 120 秒查询，设置范围 60～3600 秒。手动刷新也遵守至少 60 秒节流；429 后至少等待 5 分钟。页面每 5 秒读取本地结果，设备每 5 秒读取 `/status`，都不会触发额外额度请求。
+- 默认每 2 分钟查询，可在基础设置按分钟调整为 1 分钟至 24 小时。手动刷新也遵守至少 60 秒节流；429 后至少等待 5 分钟。页面每 5 秒读取本地结果，设备每 5 秒读取 `/status`，都不会触发额外额度请求。
 - 网络/认证失败时显示最近成功数据，并注明查询失败/数据过期；不会把未知额度显示成 0%。缓存超过 24 小时不在冷启动恢复。禁用来源、切换凭据目录/模式或凭据变化会清除对应旧数据；修改设备地址、端口或刷新间隔不会清除有效额度。
 - 当前使用的供应商额度接口可能变化或限流。Claude API / Codex CLI 版本变动时，应重新检查解析和错误处理。
 - 数据目录中保存 `settings.json` 和 `usage-cache.json`，不保存只读来源的 token。自动续期模式的 `data/codex/auth.json` 是实际登录凭据，不能提交到 Git 或分享。
@@ -175,7 +175,7 @@ journalctl -u aiclock --no-pager -n 50
 
 ## 5. petdex 使用
 
-保存设备 IP，测试连接成功后打开“选择宠物”：搜索名称，选择宠物，再选择 Codex/Claude 插槽和动画，右侧显示实际生成的 GIF 预览。点击上传后，服务下载 WebP 精灵图，用 ImageSharp 裁剪、缩放并合成 GIF，通过设备原有 multipart 接口发送。
+先在基础设置添加一个或多个设备。打开“选择宠物”后可通过 Petdex 中文站链接访问图库源；在本页搜索名称、选择宠物、目标屏幕、Codex/Claude 插槽和动画，右侧显示实际生成的 GIF 预览。点击上传后，服务下载 WebP 精灵图，用 ImageSharp 裁剪、缩放并合成 GIF，通过设备原有 multipart 接口发送。
 
 Claude 插槽为 111×120，Codex 插槽为 120×120；GIF 最多 8 帧，与当前固件限制一致。预览与上传使用同一份转换结果。上传时请保持设备 Wi-Fi 可达，板上解码可能需要几十秒。上传或恢复默认只影响选定插槽。
 
@@ -191,14 +191,17 @@ Claude 插槽为 111×120，Codex 插槽为 120×120；GIF 最多 8 帧，与当
 | GET | `/api/usage` | 额度、窗口、更新时间、过期状态、错误 |
 | POST | `/api/usage/refresh` | 在节流允许时手动刷新 |
 | GET / POST | `/api/settings` | 查询 / 保存基础设置 |
-| GET | `/api/device` | 测试连接并获取设备信息 |
-| POST | `/api/device/pair` | 将设备指向已保存的对外服务地址 |
-| POST | `/api/device/display` | `{"mode":"auto\|claude\|codex\|dual"}` |
-| POST | `/api/device/brightness` | `{"level":0到100}` |
+| GET | `/api/devices` | 列出已保存的小屏幕 |
+| POST | `/api/devices` | 添加设备，`{"name":"书桌屏幕","host":"192.168.1.50"}` |
+| POST | `/api/devices/{id}/update` / `/delete` | 修改 / 删除指定设备 |
+| GET | `/api/devices/{id}/info` | 测试指定设备连接并获取设备信息 |
+| POST | `/api/devices/{id}/pair` | 将指定设备指向已保存的对外服务地址 |
+| POST | `/api/devices/{id}/display` | `{"mode":"auto\|claude\|codex\|dual"}` |
+| POST | `/api/devices/{id}/brightness` | `{"level":0到100}` |
 | GET | `/api/pets?search=关键词&page=0` | 搜索 / 分页 |
 | GET | `/api/pets/{slug}/preview?slot=codex&animation=idle` | GIF 预览 |
-| POST | `/api/pets/{slug}/apply` | `{"slot":"codex","animation":"idle"}` |
-| POST | `/api/pets/reset` | `{"slot":"codex"}` |
+| POST | `/api/pets/{slug}/apply` | `{"deviceId":"设备ID","slot":"codex","animation":"idle"}` |
+| POST | `/api/pets/reset` | `{"deviceId":"设备ID","slot":"codex"}` |
 
 POST 路由要求 `Content-Type: application/json`，浏览器请求要求同源。无需参数的 POST 发送 `{}` 即可。
 

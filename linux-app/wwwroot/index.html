@@ -24,7 +24,7 @@
         <aside class="overview-note"><span class="note-symbol" aria-hidden="true">i</span><div><strong>Codex 没有运行，也能查额度。</strong><p>服务独立查询账户额度。只读模式使用已有登录凭据；自动续期模式由 Codex 管理登录状态。</p></div><button class="text-button" data-view="settings">配置数据来源 →</button></aside>
       </section>
       <section id="pets" class="view" hidden>
-        <div class="section-title"><div><p class="eyebrow">给桌上添一点个性</p><h1>为小屏幕挑一位伙伴。</h1><p class="subtle">来自 petdex 的宠物与动画，预览确认后直接上传到设备。</p></div></div>
+        <div class="section-title"><div><p class="eyebrow">给桌上添一点个性</p><h1>为小屏幕挑一位伙伴。</h1><p class="subtle">来自 petdex 的宠物与动画，预览确认后直接上传到设备。<a class="inline-link" href="https://petdex.dev/zh" target="_blank" rel="noopener noreferrer">访问 Petdex 中文站 ↗</a></p></div></div>
         <div class="pet-layout">
           <section class="panel catalog"><label class="search-label" for="pet-search">搜索宠物</label><div class="search-row"><input id="pet-search" type="search" placeholder="输入名称或关键词" maxlength="100"><button id="pet-search-button" class="button">搜索</button></div>
             <div class="catalog-heading"><span id="pet-count">准备加载图库</span><span>名称 / 类型</span></div>
@@ -33,7 +33,7 @@
           </section>
           <section class="panel pet-detail"><p class="eyebrow">动画预览</p><div class="mini-monitor"><div class="monitor-screen"><img id="pet-preview" alt="所选宠物动画预览" hidden><span id="preview-message">选一位伙伴吧</span></div><div class="monitor-base"><span>AI CLOCK</span><span class="monitor-light"></span></div></div>
             <h2 id="selected-pet">尚未选择宠物</h2><p id="selected-slug" class="subtle">从左侧图库选择，或搜索你喜欢的角色。</p>
-            <div class="form-grid"><label>上传到<select id="pet-slot"><option value="codex">Codex 插槽</option><option value="claude">Claude 插槽</option></select></label><label>动画<select id="pet-animation"><option value="idle">待机</option></select></label></div>
+            <div class="form-grid"><label>目标小屏幕<select id="pet-device"><option value="">请先添加设备</option></select></label><label>上传到<select id="pet-slot"><option value="codex">Codex 插槽</option><option value="claude">Claude 插槽</option></select></label><label>动画<select id="pet-animation"><option value="idle">待机</option></select></label></div>
             <button id="pet-apply" class="button primary full" disabled>上传到小屏幕</button><button id="pet-reset" class="text-button full">恢复此插槽默认宠物</button>
             <p class="hint">设备通过 Wi-Fi 接收 GIF，并保存到板上。额度模式下宠物保持待机；动画预览不代表 CLI 正在工作。</p>
           </section>
@@ -44,9 +44,8 @@
         <form id="settings-form">
           <div class="settings-grid">
             <section class="panel"><div class="panel-title"><span class="section-number">01</span><h2>设备与连接</h2></div>
-              <label>小屏幕地址<input id="device-host" placeholder="192.168.1.50" autocomplete="off"><small>设备 IP，可附带端口。不要填写 http://。</small></label>
               <label>设备可访问的服务地址<input id="advertised-host" placeholder="192.168.1.20:8765" autocomplete="off"><small>填写这台电脑的局域网 IP 与对外端口。Docker 使用宿主机地址。</small></label>
-              <div class="form-grid"><label>服务监听端口<input id="port" type="number" min="1" max="65535" required></label><label>额度查询间隔（秒）<input id="refresh-seconds" type="number" min="60" max="3600" required></label></div>
+              <div class="form-grid"><label>服务监听端口<input id="port" type="number" min="1" max="65535" required></label><label>额度刷新间隔（分钟）<input id="refresh-minutes" type="number" min="1" max="1440" step="0.01" required><small>1～1440 分钟，支持小数。</small></label></div>
               <p id="port-hint" class="hint"></p>
             </section>
             <section class="panel"><div class="panel-title"><span class="section-number">02</span><h2>额度数据来源</h2></div>
@@ -61,8 +60,13 @@
           </div>
           <div class="save-row"><p>路径填写服务所在环境中的绝对路径。凭据不会显示在网页上。</p><button class="button primary" id="save-settings" type="submit">保存设置</button></div>
         </form>
-        <section class="panel device-controls"><div class="panel-title"><span class="section-number">03</span><h2>小屏幕控制</h2><span id="device-status" class="subtle">尚未测试连接</span></div>
-          <div class="control-row"><button id="device-test" class="button">测试设备连接</button><button id="device-pair" class="button">将设备指向本服务</button><label>显示模式<select id="display-mode"><option value="auto">自动轮换</option><option value="codex">固定 Codex</option><option value="claude">固定 Claude</option><option value="dual">双栏额度</option></select></label><button id="set-display" class="button">应用模式</button></div>
+        <section class="panel device-manager"><div class="panel-title"><span class="section-number">03</span><h2>小屏幕列表</h2><span class="subtle">最多 16 台</span></div>
+          <form id="device-add-form" class="device-add-form"><label>设备名称<input id="new-device-name" placeholder="例如：书桌屏幕" maxlength="50" required></label><label>小屏幕 IP 地址<input id="new-device-host" placeholder="192.168.1.50" autocomplete="off" required></label><button class="button primary" id="add-device" type="submit">添加设备</button></form>
+          <p class="hint">设备需与服务在同一局域网。每台屏幕可单独测试与配对，宠物上传和显示设置可指定目标。</p>
+          <div id="device-list" class="device-list" aria-live="polite"></div>
+        </section>
+        <section class="panel device-controls"><div class="panel-title"><span class="section-number">04</span><h2>小屏幕控制</h2><label class="target-label">控制目标<select id="device-target"><option value="">请先添加设备</option></select></label></div>
+          <div class="control-row"><button id="device-pair" class="button">将设备指向本服务</button><label>显示模式<select id="display-mode"><option value="auto">自动轮换</option><option value="codex">固定 Codex</option><option value="claude">固定 Claude</option><option value="dual">双栏额度</option></select></label><button id="set-display" class="button">应用模式</button></div>
           <div class="brightness-row"><label for="brightness">屏幕亮度</label><input id="brightness" type="range" min="0" max="100" value="70"><output id="brightness-value" for="brightness">70%</output><button id="set-brightness" class="button">应用亮度</button></div>
           <p class="hint">连接操作使用已保存的设备地址。显示模式、亮度与宠物均保存到设备，重启后保持。</p>
         </section>
