@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Globalization;
 
 namespace AIClockBridge.Linux;
 
@@ -77,6 +78,17 @@ public sealed class SettingsStore
             if (string.IsNullOrWhiteSpace(device.Name) || device.Name.Trim().Length > 50) throw new BridgeException("小屏幕名称不能为空，且最多 50 个字符。");
             if (!hosts.Add(device.Host.Trim())) throw new BridgeException("同一个设备地址不能重复添加。");
             ValidateHost(device.Host);
+            if (device.DayBrightness is < 0 or > 100 || device.PageOffBrightness is < 0 or > 100 || device.NightBrightness is < 0 or > 100)
+                throw new BridgeException("小屏幕亮度必须在 0～100 之间。");
+            if (device.PageMode is not ("auto" or "claude" or "codex" or "dual"))
+                throw new BridgeException("定时页面模式无效。");
+            foreach (var time in new[] { device.PageOnTime, device.PageOffTime, device.NightStart, device.NightEnd })
+                if (!TimeOnly.TryParseExact(time, "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
+                    throw new BridgeException("定时请使用 24 小时制时分，例如 22:30。");
+            if (device.PageScheduleEnabled && device.PageOnTime == device.PageOffTime)
+                throw new BridgeException("页面开启和关闭时间不能相同。");
+            if (device.NightModeEnabled && device.NightStart == device.NightEnd)
+                throw new BridgeException("夜间模式开始和结束时间不能相同。");
         }
         foreach (var path in new[] { s.CodexHome, s.ClaudeHome })
             if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path))

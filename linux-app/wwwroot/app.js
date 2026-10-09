@@ -67,18 +67,50 @@ function renderDeviceTargets() {
 function renderDeviceList() {
   const devices = deviceList();
   if (!devices.length) { $('device-list').innerHTML = '<p class="empty-devices">还没有添加小屏幕。填写设备名称和 IP 后即可连接。</p>'; return; }
-  $('device-list').innerHTML = devices.map((device, index) => `<article class="device-row" data-device-index="${index}"><div class="device-row-fields"><label>设备名称<input data-device-field="name" maxlength="50" required></label><label>IP 地址<input data-device-field="host" autocomplete="off" required></label></div><div class="device-row-actions"><span class="device-status" data-device-status>${escapeHtml(state.deviceStatuses[device.id] ?? '尚未测试连接')}</span><button class="button" data-device-action="test">测试</button><button class="button" data-device-action="pair">配对</button><button class="button" data-device-action="save">保存</button><button class="text-button danger-button" data-device-action="delete">移除</button></div></article>`).join('');
+  $('device-list').innerHTML = devices.map((device, index) => `<article class="device-row" data-device-index="${index}">
+    <div class="device-row-fields"><label>设备名称<input data-device-field="name" maxlength="50" required></label><label>IP 地址<input data-device-field="host" autocomplete="off" required></label></div>
+    <div class="device-row-actions"><span class="device-status" data-device-status>${escapeHtml(state.deviceStatuses[device.id] ?? '尚未测试连接')}</span><button class="button" data-device-action="test">测试</button><button class="button" data-device-action="pair">配对</button><button class="button" data-device-action="save">保存</button><button class="text-button danger-button" data-device-action="delete">移除</button><a class="button device-page-link" data-device-page target="_blank" rel="noopener noreferrer">打开屏幕页面 ↗</a></div>
+    <details class="device-schedule"><summary>定时页面与夜间亮度</summary><div class="schedule-grid">
+      <label class="checkbox-label"><input type="checkbox" data-schedule="pageScheduleEnabled">按时间开启页面</label>
+      <label>开启时的页面模式<select data-schedule="pageMode"><option value="auto">自动轮换</option><option value="codex">固定 Codex</option><option value="claude">固定 Claude</option><option value="dual">双栏额度</option></select></label>
+      <label>每日开启时间<input type="time" data-schedule="pageOnTime" required></label><label>每日关闭时间<input type="time" data-schedule="pageOffTime" required></label>
+      <label>页面关闭亮度<input type="range" min="0" max="100" data-schedule="pageOffBrightness"><output data-schedule-value="pageOffBrightness"></output></label>
+      <label class="checkbox-label"><input type="checkbox" data-schedule="nightModeEnabled">启用夜间亮度</label>
+      <label>夜间开始<input type="time" data-schedule="nightStart" required></label><label>夜间结束<input type="time" data-schedule="nightEnd" required></label>
+      <label>夜间亮度<input type="range" min="0" max="100" data-schedule="nightBrightness"><output data-schedule-value="nightBrightness"></output></label>
+    </div><p class="hint">按服务所在电脑的本地时间执行。关闭亮度可单独设置；夜间亮度只在页面开启期间应用。</p><button class="button" data-device-action="schedule">保存定时与夜间设置</button></details>
+  </article>`).join('');
   document.querySelectorAll('.device-row').forEach(row => {
     const device = devices[Number(row.dataset.deviceIndex)];
     row.querySelector('[data-device-field="name"]').value = device.name;
     row.querySelector('[data-device-field="host"]').value = device.host;
+    const pageLink = row.querySelector('[data-device-page]');
+    pageLink.href = new URL(`http://${device.host}/`).href;
+    const schedule = {
+      pageScheduleEnabled: device.pageScheduleEnabled, pageMode: device.pageMode, pageOnTime: device.pageOnTime, pageOffTime: device.pageOffTime, pageOffBrightness: device.pageOffBrightness,
+      nightModeEnabled: device.nightModeEnabled, nightStart: device.nightStart, nightEnd: device.nightEnd, nightBrightness: device.nightBrightness
+    };
+    for (const [key, value] of Object.entries(schedule)) {
+      const field = row.querySelector(`[data-schedule="${key}"]`);
+      if (field.type === 'checkbox') field.checked = value;
+      else field.value = value;
+    }
+    for (const key of ['pageOffBrightness', 'nightBrightness']) {
+      const range = row.querySelector(`[data-schedule="${key}"]`);
+      const output = row.querySelector(`[data-schedule-value="${key}"]`);
+      output.value = `${range.value}%`; output.textContent = output.value;
+      range.oninput = () => { output.value = `${range.value}%`; output.textContent = output.value; };
+    }
     const route = action => `/api/devices/${encodeURIComponent(device.id)}/${action}`;
     row.querySelector('[data-device-action="test"]').onclick = buttonEvent => action(buttonEvent.currentTarget, async () => {
       const info = await api(route('info'));
       state.deviceTargetId = device.id; renderDeviceTargets();
       const status = `已连接 · ${info.ip || device.host}${info.fw ? ` · ${info.fw}` : ''}`;
       if (['auto', 'codex', 'claude', 'dual'].includes(info.mode)) $('display-mode').value = info.mode;
-      if (Number.isFinite(info.brightness)) { $('brightness').value = info.brightness; $('brightness-value').textContent = `${info.brightness}%`; }
+      if (Number.isFinite(info.brightness)) {
+        $('brightness').value = info.brightness; $('brightness-value').textContent = `${info.brightness}%`;
+        state.settings.devices = state.settings.devices.map(entry => entry.id === device.id ? { ...entry, dayBrightness: info.brightness } : entry);
+      }
       state.deviceStatuses[device.id] = status; row.querySelector('[data-device-status]').textContent = status;
     }, '设备连接正常。');
     row.querySelector('[data-device-action="pair"]').onclick = buttonEvent => action(buttonEvent.currentTarget, () => api(route('pair'), {}), `“${device.name}”已指向本服务。`);
@@ -86,6 +118,16 @@ function renderDeviceList() {
       await api(route('update'), { name: row.querySelector('[data-device-field="name"]').value.trim(), host: row.querySelector('[data-device-field="host"]').value.trim() });
       delete state.deviceStatuses[device.id]; await loadSettings();
     }, '设备信息已保存。');
+    row.querySelector('[data-device-action="schedule"]').onclick = buttonEvent => action(buttonEvent.currentTarget, async () => {
+      const read = key => row.querySelector(`[data-schedule="${key}"]`);
+      await api(route('schedule'), {
+        pageScheduleEnabled: read('pageScheduleEnabled').checked, pageMode: read('pageMode').value,
+        pageOnTime: read('pageOnTime').value, pageOffTime: read('pageOffTime').value, pageOffBrightness: Number(read('pageOffBrightness').value),
+        nightModeEnabled: read('nightModeEnabled').checked, nightStart: read('nightStart').value,
+        nightEnd: read('nightEnd').value, nightBrightness: Number(read('nightBrightness').value)
+      });
+      await loadSettings();
+    }, '定时页面与夜间亮度设置已保存。');
     row.querySelector('[data-device-action="delete"]').onclick = buttonEvent => action(buttonEvent.currentTarget, async () => {
       await api(route('delete'), {}); delete state.deviceStatuses[device.id]; await loadSettings();
     }, `“${device.name}”已移除。`);
@@ -117,7 +159,11 @@ $('pet-device').onchange = () => { state.deviceTargetId = $('pet-device').value;
 $('device-pair').onclick = () => action($('device-pair'), () => api(`/api/devices/${encodeURIComponent(selectedDeviceId())}/pair`, {}), '已将所选设备指向本服务。');
 $('set-display').onclick = () => action($('set-display'), () => api(`/api/devices/${encodeURIComponent(selectedDeviceId())}/display`, { mode: $('display-mode').value }), '显示模式已保存到所选设备。');
 $('brightness').oninput = () => $('brightness-value').textContent = `${$('brightness').value}%`;
-$('set-brightness').onclick = () => action($('set-brightness'), () => api(`/api/devices/${encodeURIComponent(selectedDeviceId())}/brightness`, { level: Number($('brightness').value) }), '亮度已保存到所选设备。');
+$('set-brightness').onclick = () => action($('set-brightness'), async () => {
+  const id = selectedDeviceId(); const level = Number($('brightness').value);
+  await api(`/api/devices/${encodeURIComponent(id)}/brightness`, { level });
+  state.settings.devices = state.settings.devices.map(device => device.id === id ? { ...device, dayBrightness: level } : device);
+}, '常规亮度已保存到所选设备。');
 async function loadPets(page) {
   const sequence = ++petSearchSequence; $('pet-list').innerHTML = '<p class="loading-message">正在加载 petdex 图库…</p>';
   try {

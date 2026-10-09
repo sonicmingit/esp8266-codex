@@ -17,7 +17,19 @@ public sealed record BridgeSettings
     public int RefreshSeconds { get; init; } = 120;
 }
 
-public sealed record DeviceEntry(string Id, string Name, string Host);
+public sealed record DeviceEntry(string Id, string Name, string Host)
+{
+    public int DayBrightness { get; init; } = 100;
+    public bool PageScheduleEnabled { get; init; }
+    public string PageMode { get; init; } = "auto";
+    public string PageOnTime { get; init; } = "08:00";
+    public string PageOffTime { get; init; } = "22:00";
+    public int PageOffBrightness { get; init; }
+    public bool NightModeEnabled { get; init; }
+    public string NightStart { get; init; } = "22:00";
+    public string NightEnd { get; init; } = "08:00";
+    public int NightBrightness { get; init; } = 25;
+}
 
 public sealed record QuotaWindow(double UsedPercent, int WindowMinutes, long? ResetsAt);
 public sealed record UsageState

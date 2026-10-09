@@ -17,6 +17,7 @@ services:
       AICLOCK_CODEX_MODE: readonly
       AICLOCK_ADVERTISED_HOST: "${AICLOCK_ADVERTISED_HOST:-}"
     volumes:
+      - /etc/localtime:/etc/localtime:ro
       - type: bind
         source: "${AICLOCK_DATA_PATH:-./data}"
         target: /data

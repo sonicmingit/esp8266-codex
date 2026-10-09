@@ -48,6 +48,15 @@ public sealed class DeviceService(SettingsStore settings, HttpClient http)
         if (level is < 0 or > 100) throw new BridgeException("亮度必须在 0～100 之间。");
         return Post(id, "api/brightness", new() { ["level"] = level.ToString() }, ct);
     }
+    public async Task ApplySchedule(string id, string? mode, int brightness, CancellationToken ct)
+    {
+        if (mode is not null)
+        {
+            if (mode is not ("auto" or "claude" or "codex" or "dual")) throw new BridgeException("定时页面模式无效。");
+            await Post(id, "api/display", new() { ["mode"] = mode }, ct);
+        }
+        await Brightness(id, brightness, ct);
+    }
     public Task Reset(string slot, CancellationToken ct) => Reset(null, slot, ct);
     public Task Reset(string? id, string slot, CancellationToken ct) { ValidateSlot(slot); return Post(id, $"sprite/{slot}/reset", new(), ct); }
     public static void ValidateSlot(string slot) { if (slot is not ("claude" or "codex")) throw new BridgeException("宠物插槽无效。"); }

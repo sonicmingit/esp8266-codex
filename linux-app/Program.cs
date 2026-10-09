@@ -11,6 +11,8 @@ builder.Services.AddSingleton(settings);
 builder.Services.AddSingleton(sp => new QuotaService(settings, new HttpClient { Timeout = TimeSpan.FromSeconds(25) }));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<QuotaService>());
 builder.Services.AddSingleton(new DeviceService(settings, new HttpClient { Timeout = Timeout.InfiniteTimeSpan }));
+builder.Services.AddSingleton<DeviceScheduleService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<DeviceScheduleService>());
 builder.Services.AddSingleton(new PetdexService(new HttpClient { Timeout = TimeSpan.FromSeconds(60) }));
 var app = builder.Build();
 
@@ -61,8 +63,9 @@ app.MapPost("/api/devices", (DeviceSaveRequest request) =>
 app.MapPost("/api/devices/{id}/update", (string id, DeviceSaveRequest request) =>
 {
     var current = settings.Current;
-    if (!current.Devices.Any(d => d.Id == id)) throw new BridgeException("找不到这个小屏幕，请刷新页面后重试。");
-    var entry = NormalizeDevice(request, id);
+    var existing = current.Devices.FirstOrDefault(d => d.Id == id) ?? throw new BridgeException("找不到这个小屏幕，请刷新页面后重试。");
+    var normalized = NormalizeDevice(request, id);
+    var entry = existing with { Name = normalized.Name, Host = normalized.Host };
     if (current.Devices.Any(d => d.Id != id && string.Equals(d.Host, entry.Host, StringComparison.OrdinalIgnoreCase))) throw new BridgeException("这个设备地址已经添加过了。");
     settings.Save(current with { DeviceHost = "", Devices = current.Devices.Select(d => d.Id == id ? entry : d).ToList() });
     return Results.Ok(entry);
@@ -74,10 +77,47 @@ app.MapPost("/api/devices/{id}/delete", (string id) =>
     settings.Save(current with { DeviceHost = "", Devices = current.Devices.Where(d => d.Id != id).ToList() });
     return Results.Ok(new { ok = true });
 });
-app.MapGet("/api/devices/{id}/info", (string id, DeviceService device, CancellationToken ct) => device.Info(id, ct));
+app.MapGet("/api/devices/{id}/info", async (string id, DeviceService device, CancellationToken ct) =>
+{
+    var info = await device.Info(id, ct);
+    var current = settings.Current;
+    var entry = current.Devices.FirstOrDefault(d => d.Id == id);
+    if (entry is { PageScheduleEnabled: false, NightModeEnabled: false }
+        && info.TryGetProperty("brightness", out var value) && value.TryGetInt32(out var level) && level is >= 0 and <= 100
+        && entry.DayBrightness != level)
+        settings.Save(current with { Devices = current.Devices.Select(d => d.Id == id ? d with { DayBrightness = level } : d).ToList() });
+    return info;
+});
 app.MapPost("/api/devices/{id}/pair", async (string id, DeviceService device, CancellationToken ct) => { await device.Pair(id, ct); return Results.Ok(new { ok = true }); });
-app.MapPost("/api/devices/{id}/display", async (string id, DisplayRequest request, DeviceService device, CancellationToken ct) => { await device.Display(id, request.Mode, ct); return Results.Ok(new { ok = true }); });
-app.MapPost("/api/devices/{id}/brightness", async (string id, BrightnessRequest request, DeviceService device, CancellationToken ct) => { await device.Brightness(id, request.Level, ct); return Results.Ok(new { ok = true }); });
+app.MapPost("/api/devices/{id}/display", async (string id, DisplayRequest request, DeviceService device, DeviceScheduleService schedule, CancellationToken ct) => { await device.Display(id, request.Mode, ct); schedule.Forget(id); return Results.Ok(new { ok = true }); });
+app.MapPost("/api/devices/{id}/brightness", async (string id, BrightnessRequest request, DeviceService device, DeviceScheduleService schedule, CancellationToken ct) =>
+{
+    await device.Brightness(id, request.Level, ct);
+    var current = settings.Current;
+    if (!current.Devices.Any(d => d.Id == id)) throw new BridgeException("找不到这个小屏幕，请刷新页面后重试。");
+    settings.Save(current with { Devices = current.Devices.Select(d => d.Id == id ? d with { DayBrightness = request.Level } : d).ToList() });
+    schedule.Forget(id);
+    return Results.Ok(new { ok = true });
+});
+app.MapPost("/api/devices/{id}/schedule", (string id, DeviceScheduleRequest request) =>
+{
+    var current = settings.Current;
+    if (!current.Devices.Any(d => d.Id == id)) throw new BridgeException("找不到这个小屏幕，请刷新页面后重试。");
+    var devices = current.Devices.Select(d => d.Id == id ? d with
+    {
+        PageScheduleEnabled = request.PageScheduleEnabled,
+        PageMode = request.PageMode,
+        PageOnTime = request.PageOnTime,
+        PageOffTime = request.PageOffTime,
+        PageOffBrightness = request.PageOffBrightness,
+        NightModeEnabled = request.NightModeEnabled,
+        NightStart = request.NightStart,
+        NightEnd = request.NightEnd,
+        NightBrightness = request.NightBrightness
+    } : d).ToList();
+    settings.Save(current with { Devices = devices });
+    return Results.Ok(new { ok = true });
+});
 // Retain the original single-device endpoints for existing integrations.
 app.MapGet("/api/device", (DeviceService device, CancellationToken ct) => device.Info(ct));
 app.MapPost("/api/device/pair", async (DeviceService device, CancellationToken ct) => { await device.Pair(ct); return Results.Ok(new { ok = true }); });
@@ -108,5 +148,6 @@ app.Run();
 record DisplayRequest(string Mode);
 record BrightnessRequest(int Level);
 record DeviceSaveRequest(string Name, string Host);
+record DeviceScheduleRequest(bool PageScheduleEnabled, string PageMode, string PageOnTime, string PageOffTime, int PageOffBrightness, bool NightModeEnabled, string NightStart, string NightEnd, int NightBrightness);
 record PetRequest(string Animation, string Slot, string DeviceId);
 record SlotRequest(string Slot, string DeviceId);
