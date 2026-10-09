@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f3eb"><title>AIClock · 小屏幕控制台</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="masthead">
+      <a class="brand" href="/"><img src="/icon.svg" alt="" width="44" height="44"><span>AIClock<small>小屏幕控制台</small></span></a>
+      <span class="connection" id="connection">正在连接服务</span>
+    </header>
+    <nav class="navigation" aria-label="主导航">
+      <button class="active" data-view="overview" aria-current="page">额度概览</button>
+      <button data-view="pets">选择宠物</button><button data-view="settings">基础设置</button>
+      <span class="edition">LINUX BRIDGE / 01</span>
+    </nav>
+    <main>
+      <section id="overview" class="view">
+        <div class="section-title"><div><p class="eyebrow">留一点余量，继续创造</p><h1>下一次灵感，还有多少空间。</h1><p class="subtle">账户额度会在后台定时查询，小屏幕与这里共享同一份数据。</p></div><button id="refresh" class="button primary">刷新额度 <span aria-hidden="true">↻</span></button></div>
+        <div class="quota-grid" id="quota-cards" aria-live="polite" aria-busy="true"><article class="quota-card"><h2>Codex</h2><p class="subtle">正在获取额度…</p></article><article class="quota-card"><h2>Claude</h2><p class="subtle">正在获取额度…</p></article></div>
+        <aside class="overview-note"><span class="note-symbol" aria-hidden="true">i</span><div><strong>Codex 没有运行，也能查额度。</strong><p>服务独立查询账户额度。只读模式使用已有登录凭据；自动续期模式由 Codex 管理登录状态。</p></div><button class="text-button" data-view="settings">配置数据来源 →</button></aside>
+      </section>
+      <section id="pets" class="view" hidden>
+        <div class="section-title"><div><p class="eyebrow">给桌上添一点个性</p><h1>为小屏幕挑一位伙伴。</h1><p class="subtle">来自 petdex 的宠物与动画，预览确认后直接上传到设备。</p></div></div>
+        <div class="pet-layout">
+          <section class="panel catalog"><label class="search-label" for="pet-search">搜索宠物</label><div class="search-row"><input id="pet-search" type="search" placeholder="输入名称或关键词" maxlength="100"><button id="pet-search-button" class="button">搜索</button></div>
+            <div class="catalog-heading"><span id="pet-count">准备加载图库</span><span>名称 / 类型</span></div>
+            <div id="pet-list" class="pet-list" aria-live="polite"></div>
+            <div class="pager"><button id="pet-prev" class="button" disabled>← 上一页</button><span id="pet-page">—</span><button id="pet-next" class="button" disabled>下一页 →</button></div>
+          </section>
+          <section class="panel pet-detail"><p class="eyebrow">动画预览</p><div class="mini-monitor"><div class="monitor-screen"><img id="pet-preview" alt="所选宠物动画预览" hidden><span id="preview-message">选一位伙伴吧</span></div><div class="monitor-base"><span>AI CLOCK</span><span class="monitor-light"></span></div></div>
+            <h2 id="selected-pet">尚未选择宠物</h2><p id="selected-slug" class="subtle">从左侧图库选择，或搜索你喜欢的角色。</p>
+            <div class="form-grid"><label>上传到<select id="pet-slot"><option value="codex">Codex 插槽</option><option value="claude">Claude 插槽</option></select></label><label>动画<select id="pet-animation"><option value="idle">待机</option></select></label></div>
+            <button id="pet-apply" class="button primary full" disabled>上传到小屏幕</button><button id="pet-reset" class="text-button full">恢复此插槽默认宠物</button>
+            <p class="hint">设备通过 Wi-Fi 接收 GIF，并保存到板上。额度模式下宠物保持待机；动画预览不代表 CLI 正在工作。</p>
+          </section>
+        </div>
+      </section>
+      <section id="settings" class="view" hidden>
+        <div class="section-title"><div><p class="eyebrow">一次设置，安静常驻</p><h1>让服务与小屏幕连起来。</h1><p class="subtle">保存后数据来源立即生效。原生服务的监听端口修改需重启。</p></div></div>
+        <form id="settings-form">
+          <div class="settings-grid">
+            <section class="panel"><div class="panel-title"><span class="section-number">01</span><h2>设备与连接</h2></div>
+              <label>小屏幕地址<input id="device-host" placeholder="192.168.1.50" autocomplete="off"><small>设备 IP，可附带端口。不要填写 http://。</small></label>
+              <label>设备可访问的服务地址<input id="advertised-host" placeholder="192.168.1.20:8765" autocomplete="off"><small>填写这台电脑的局域网 IP 与对外端口。Docker 使用宿主机地址。</small></label>
+              <div class="form-grid"><label>服务监听端口<input id="port" type="number" min="1" max="65535" required></label><label>额度查询间隔（秒）<input id="refresh-seconds" type="number" min="60" max="3600" required></label></div>
+              <p id="port-hint" class="hint"></p>
+            </section>
+            <section class="panel"><div class="panel-title"><span class="section-number">02</span><h2>额度数据来源</h2></div>
+              <label class="checkbox-label"><input id="codex-enabled" type="checkbox">启用 Codex 额度查询</label>
+              <label>Codex 凭据目录<input id="codex-home" required autocomplete="off"><small>目录中的 auth.json 需要包含 ChatGPT 登录凭据。</small></label>
+              <label>Codex 查询方式<select id="codex-mode"><option value="readonly">只读映射 · 使用已有凭据</option><option value="managed">自动续期 · Codex App Server</option></select></label>
+              <p id="mode-hint" class="hint"></p>
+              <div class="source-divider"></div>
+              <label class="checkbox-label"><input id="claude-enabled" type="checkbox">启用 Claude 额度查询</label>
+              <label>Claude 凭据目录<input id="claude-home" required autocomplete="off"><small>读取 .credentials.json。Claude 仅支持只读模式，失效后需重新登录。</small></label>
+            </section>
+          </div>
+          <div class="save-row"><p>路径填写服务所在环境中的绝对路径。凭据不会显示在网页上。</p><button class="button primary" id="save-settings" type="submit">保存设置</button></div>
+        </form>
+        <section class="panel device-controls"><div class="panel-title"><span class="section-number">03</span><h2>小屏幕控制</h2><span id="device-status" class="subtle">尚未测试连接</span></div>
+          <div class="control-row"><button id="device-test" class="button">测试设备连接</button><button id="device-pair" class="button">将设备指向本服务</button><label>显示模式<select id="display-mode"><option value="auto">自动轮换</option><option value="codex">固定 Codex</option><option value="claude">固定 Claude</option><option value="dual">双栏额度</option></select></label><button id="set-display" class="button">应用模式</button></div>
+          <div class="brightness-row"><label for="brightness">屏幕亮度</label><input id="brightness" type="range" min="0" max="100" value="70"><output id="brightness-value" for="brightness">70%</output><button id="set-brightness" class="button">应用亮度</button></div>
+          <p class="hint">连接操作使用已保存的设备地址。显示模式、亮度与宠物均保存到设备，重启后保持。</p>
+        </section>
+      </section>
+    </main>
+    <footer><span>AIClock · 为桌上的小屏幕服务</span><span>额度查询 / petdex / Wi-Fi</span></footer>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

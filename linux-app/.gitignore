@@ -1,0 +1,11 @@
+bin/
+obj/
+**/bin/
+**/obj/
+.tools/
+data/
+.test-data/
+.env
+!.env.example
+auth.json
+*.credentials.json

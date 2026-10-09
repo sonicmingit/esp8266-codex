@@ -1,0 +1,40 @@
+services:
+  aiclock:
+    build:
+      context: .
+      target: readonly
+    image: aiclock-linux:readonly
+    restart: unless-stopped
+    user: "${AICLOCK_UID:-1000}:${AICLOCK_GID:-1000}"
+    ports:
+      - "${AICLOCK_HOST_PORT:-8765}:8765"
+    environment:
+      AICLOCK_DOCKER: "1"
+      AICLOCK_PORT: "8765"
+      AICLOCK_DATA_DIR: /data
+      AICLOCK_CODEX_HOME: /credentials/codex
+      AICLOCK_CLAUDE_HOME: /credentials/claude
+      AICLOCK_CODEX_MODE: readonly
+      AICLOCK_ADVERTISED_HOST: "${AICLOCK_ADVERTISED_HOST:-}"
+    volumes:
+      - type: bind
+        source: "${AICLOCK_DATA_PATH:-./data}"
+        target: /data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${AICLOCK_CODEX_PATH:-./data/empty-codex}"
+        target: /credentials/codex
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${AICLOCK_CLAUDE_PATH:-./data/empty-claude}"
+        target: /credentials/claude
+        read_only: true
+        bind:
+          create_host_path: false
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

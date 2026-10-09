@@ -1,0 +1,14 @@
+*
+!AIClockBridge.Linux.csproj
+!Models.cs
+!SettingsStore.cs
+!QuotaParser.cs
+!Credentials.cs
+!CodexRpc.cs
+!QuotaService.cs
+!DeviceService.cs
+!PetdexService.cs
+!Program.cs
+!wwwroot/
+!wwwroot/**
+!Dockerfile
