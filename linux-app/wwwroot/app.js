@@ -2,7 +2,7 @@
 const $ = id => document.getElementById(id);
 const state = { usage: null, settings: null, runtime: null, pets: [], selected: null, page: 0, total: 0, petLoaded: false, deviceTargetId: '', deviceStatuses: {}, deviceInfos: {} };
 const escapeHtml = value => { const node = document.createElement('span'); node.textContent = String(value ?? ''); return node.innerHTML; };
-let toastTimer, previewSequence = 0, petSearchSequence = 0, polling = false, loginRefreshedAt = sessionStorage.getItem('codex-login-refreshed-at');
+let toastTimer, previewSequence = 0, petSearchSequence = 0, polling = false, loginRefreshedAt = sessionStorage.getItem('codex-login-refreshed-at'), codexLoginCode = '';
 let messageFormLoaded = false, messagePolling = false, messageSending = false, messagesState = null;
 function toast(message, error = false) { clearTimeout(toastTimer); $('toast').textContent = message; $('toast').className = `toast${error ? ' error' : ''}`; $('toast').hidden = false; toastTimer = setTimeout(() => $('toast').hidden = true, error ? 9000 : 5000); }
 async function api(path, body) {
@@ -59,16 +59,31 @@ function updateModeHint() {
   $('mode-hint').textContent = managed ? '服务会在后台自动续期。需要首次登录时，直接在下方控制台启动设备登录。' : '每次查询重新读取只读目录中的 auth.json；此模式不会写入或续期凭据。';
   renderServiceMode($('codex-mode').value);
 }
+function cleanTerminalText(value) {
+  return String(value ?? '').replace(/\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g, '').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+}
+function extractDeviceCode(output) {
+  const lines = cleanTerminalText(output).replace(/\r\n?/g, '\n').split('\n');
+  const promptLine = lines.findIndex(line => /one-time code/i.test(line));
+  if (promptLine < 0) return '';
+  return lines.slice(promptLine, promptLine + 5).join('\n').match(/\b[A-Z0-9]{4,8}-[A-Z0-9]{4,8}\b/i)?.[0].toUpperCase() ?? '';
+}
 async function loadCodexLogin() {
   try {
     const data = await api('/api/codex/login');
-    $('codex-login-output').textContent = data.output || (data.error ? data.error : '等待设备登录…');
+    const output = cleanTerminalText(data.output);
+    $('codex-login-output').textContent = output || (data.error ? data.error : '等待设备登录…');
     $('codex-login-output').scrollTop = $('codex-login-output').scrollHeight;
-    const foundUrl = (data.output || '').match(/https:\/\/auth\.openai\.com\/[^\s"'<>]+/);
+    codexLoginCode = extractDeviceCode(output);
+    $('codex-login-copy-code').hidden = !codexLoginCode;
+    const foundUrl = output.match(/https:\/\/auth\.openai\.com\/[^\s"'<>]+/);
     const loginUrl = foundUrl?.[0].replace(/[),.;]+$/, '');
     $('codex-login-link').hidden = !loginUrl;
     if (loginUrl) $('codex-login-link').href = loginUrl;
-    $('codex-login-status').textContent = data.running ? '等待完成设备验证' : data.startedAt ? (data.exitCode === 0 ? '登录进程已完成' : `登录进程已结束${data.exitCode == null ? '' : ` · 退出码 ${data.exitCode}`}`) : '尚未启动';
+    const succeeded = Boolean(!data.running && data.startedAt && data.exitCode === 0);
+    $('codex-login-console').hidden = succeeded;
+    $('codex-login-success').hidden = !succeeded;
+    $('codex-login-status').textContent = data.running ? '等待完成设备验证' : succeeded ? '登录成功' : data.startedAt ? `登录进程已结束${data.exitCode == null ? '' : ` · 退出码 ${data.exitCode}`}` : '尚未启动';
     $('codex-login-start').disabled = Boolean(data.running);
     $('codex-login-cancel').disabled = !data.running;
     if (!data.running && data.startedAt && data.exitCode === 0 && loginRefreshedAt !== data.startedAt) {
@@ -78,6 +93,33 @@ async function loadCodexLogin() {
       catch (error) { toast(`登录完成，但额度刷新失败：${error.message}`, true); }
     }
   } catch { /* Login status is unavailable until the service is reachable. */ }
+}
+async function copyLoginCode() {
+  if (!codexLoginCode) return;
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error('剪贴板不可用');
+    await navigator.clipboard.writeText(codexLoginCode);
+    const dialog = $('codex-code-dialog');
+    if (dialog.open && typeof dialog.close === 'function') dialog.close();
+    else dialog.removeAttribute('open');
+    toast('验证码已复制。');
+  } catch {
+    const dialog = $('codex-code-dialog'), input = $('codex-code-manual');
+    input.value = codexLoginCode;
+    if (!dialog.open) {
+      if (typeof dialog.showModal === 'function') dialog.showModal();
+      else dialog.setAttribute('open', '');
+    }
+    input.focus(); input.select();
+    input.setSelectionRange(0, input.value.length);
+  }
+}
+async function startCodexLogin() {
+  $('codex-login-console').hidden = false;
+  $('codex-login-success').hidden = true;
+  $('codex-login-start').disabled = true;
+  try { await api('/api/codex/login/start', {}); await loadCodexLogin(); toast('设备登录已启动，请按控制台提示完成验证。'); }
+  catch (error) { toast(error.message, true); await loadCodexLogin(); }
 }
 function renderServiceMode(mode) {
   $('service-mode').textContent = `Codex 模式 · ${mode}`;
@@ -170,11 +212,10 @@ async function loadSettings() {
   updateModeHint(); renderDevices();
 }
 $('codex-mode').onchange = updateModeHint;
-$('codex-login-start').onclick = async () => {
-  $('codex-login-start').disabled = true;
-  try { await api('/api/codex/login/start', {}); await loadCodexLogin(); toast('设备登录已启动，请按控制台提示完成验证。'); }
-  catch (error) { toast(error.message, true); await loadCodexLogin(); }
-};
+$('codex-login-start').onclick = startCodexLogin;
+$('codex-login-again').onclick = startCodexLogin;
+$('codex-login-copy-code').onclick = copyLoginCode;
+$('codex-code-retry').onclick = copyLoginCode;
 $('codex-login-cancel').onclick = async () => {
   $('codex-login-cancel').disabled = true;
   try { await api('/api/codex/login/cancel', {}); await loadCodexLogin(); toast('登录流程已取消。'); }

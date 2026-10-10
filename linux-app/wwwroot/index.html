@@ -78,11 +78,12 @@
               <div id="codex-readonly-fields"><label>只读模式凭据目录<input id="codex-home" autocomplete="off"><small>读取此目录中的 auth.json，不会修改或续期宿主机凭据。</small></label></div>
               <div id="codex-managed-fields" hidden>
                 <label>自动续期模式凭据目录<input id="codex-managed-home" autocomplete="off"><small>独立保存服务账号；与只读目录分开，切换模式时会自动使用对应目录。</small></label>
-                <div class="login-console" aria-labelledby="codex-login-title">
+                <div id="codex-login-console" class="login-console" aria-labelledby="codex-login-title">
                   <div class="login-console-head"><div><strong id="codex-login-title">服务账号登录</strong><span id="codex-login-status" role="status">尚未启动</span></div><span class="console-lamp" aria-hidden="true"></span></div>
                   <pre id="codex-login-output" aria-live="polite">点击“开始登录”，然后按控制台提示完成 ChatGPT 设备验证。</pre>
-                  <div class="login-console-actions"><button id="codex-login-start" class="button primary" type="button">开始登录</button><button id="codex-login-cancel" class="button" type="button" disabled>取消</button><a id="codex-login-link" class="button" target="_blank" rel="noopener noreferrer" hidden>打开验证页面 ↗</a></div>
+                  <div class="login-console-actions"><button id="codex-login-start" class="button primary" type="button">开始登录</button><button id="codex-login-cancel" class="button" type="button" disabled>取消</button><a id="codex-login-link" class="button" target="_blank" rel="noopener noreferrer" hidden>打开验证页面 ↗</a><button id="codex-login-copy-code" class="button" type="button" hidden>复制验证码</button></div>
                 </div>
+                <div id="codex-login-success" class="login-console-success" role="status" hidden><span><strong>登录成功</strong>，服务账号已保存并可自动续期。</span><button id="codex-login-again" class="button" type="button">重新登录</button></div>
               </div>
               <p id="mode-hint" class="hint"></p>
               <div class="source-divider"></div>
@@ -112,6 +113,9 @@
     </main>
     <footer><span>AIClock · 为桌上的小屏幕服务</span><span>额度查询 / petdex / Wi-Fi</span></footer>
   </div>
+  <dialog id="codex-code-dialog" class="copy-code-dialog" aria-labelledby="codex-code-dialog-title">
+    <form method="dialog"><h2 id="codex-code-dialog-title">请手动复制验证码</h2><p>浏览器限制了自动复制。选中下面的验证码，然后按 Ctrl+C（Mac 上按 ⌘+C）。</p><label for="codex-code-manual">设备验证码</label><input id="codex-code-manual" type="text" readonly autocomplete="off" spellcheck="false"><div class="copy-code-dialog-actions"><button id="codex-code-retry" class="button" type="button">再试一次复制</button><button class="button primary" value="close">完成</button></div></form>
+  </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 </body>
 </html>
