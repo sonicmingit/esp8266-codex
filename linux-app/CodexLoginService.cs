@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace AIClockBridge.Linux;
@@ -15,12 +16,30 @@ public sealed class CodexLoginService(SettingsStore settings) : IAsyncDisposable
 
     public object Snapshot()
     {
+        var home = settings.Current.CodexManagedHome;
+        var hasManagedCredentials = HasManagedCredentials(home);
         lock (gate)
         {
             var running = process is { } p && !HasExited(p);
             return new { running, startedAt, exitCode = process is { } done && HasExited(done) ? SafeExitCode(done) : (int?)null,
-                output = output.ToString(), error };
+                output = output.ToString(), error, authenticated = hasManagedCredentials && !running };
         }
+    }
+
+    static bool HasManagedCredentials(string home)
+    {
+        try
+        {
+            var path = Path.Combine(home, "auth.json");
+            var file = new FileInfo(path);
+            if (!file.Exists || file.Length is <= 0 or > 1024 * 1024) return false;
+            using var document = JsonDocument.Parse(File.ReadAllBytes(path));
+            var tokens = JsonValues.Object(document.RootElement, "tokens");
+            return tokens.HasValue && (!string.IsNullOrWhiteSpace(JsonValues.String(tokens.Value, "access_token"))
+                || !string.IsNullOrWhiteSpace(JsonValues.String(tokens.Value, "refresh_token")));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException or ArgumentException or NotSupportedException)
+        { return false; }
     }
 
     public async Task<object> Start(BridgeSettings config, CancellationToken ct)

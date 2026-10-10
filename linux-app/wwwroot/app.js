@@ -80,10 +80,10 @@ async function loadCodexLogin() {
     const loginUrl = foundUrl?.[0].replace(/[),.;]+$/, '');
     $('codex-login-link').hidden = !loginUrl;
     if (loginUrl) $('codex-login-link').href = loginUrl;
-    const succeeded = Boolean(!data.running && data.startedAt && data.exitCode === 0);
+    const succeeded = Boolean(data.authenticated);
     $('codex-login-console').hidden = succeeded;
     $('codex-login-success').hidden = !succeeded;
-    $('codex-login-status').textContent = data.running ? '等待完成设备验证' : succeeded ? '登录成功' : data.startedAt ? `登录进程已结束${data.exitCode == null ? '' : ` · 退出码 ${data.exitCode}`}` : '尚未启动';
+    $('codex-login-status').textContent = data.running ? '等待完成设备验证' : succeeded ? '已检测到登录凭据' : data.startedAt ? data.exitCode === 0 ? '未检测到登录凭据' : `登录进程已结束${data.exitCode == null ? '' : ` · 退出码 ${data.exitCode}`}` : '尚未登录';
     $('codex-login-start').disabled = Boolean(data.running);
     $('codex-login-cancel').disabled = !data.running;
     if (!data.running && data.startedAt && data.exitCode === 0 && loginRefreshedAt !== data.startedAt) {
