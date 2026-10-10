@@ -5,6 +5,21 @@ if [[ $# -gt 1 || ( -n "${1:-}" && "${1:-}" != readonly && "${1:-}" != managed )
   printf '用法：bash deploy.sh [readonly|managed]\n旧参数会兼容接受，但现在部署始终包含两种模式。\n' >&2
   exit 1
 fi
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  printf '当前目录不在 Git 仓库中，无法更新代码。\n' >&2; exit 1
+fi
+previous_revision="$(git rev-parse HEAD)"
+git pull --ff-only
+current_revision="$(git rev-parse HEAD)"
+if [[ "$previous_revision" == "$current_revision" ]]; then
+  deploy_without_updates=''
+  printf 'Git 仓库没有新提交。是否仍要继续部署？[y/N] ' >&2
+  if ! read -r deploy_without_updates; then deploy_without_updates=''; fi
+  case "$deploy_without_updates" in
+    y|Y|yes|YES) ;;
+    *) printf '已取消部署。\n'; exit 0 ;;
+  esac
+fi
 command -v docker >/dev/null || { printf '请先安装 Docker Engine 和 Compose 插件。\n' >&2; exit 1; }
 docker compose version >/dev/null
 if [[ ! -f .env ]]; then
