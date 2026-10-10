@@ -5,6 +5,7 @@
 !QuotaParser.cs
 !Credentials.cs
 !CodexRpc.cs
+!CodexLoginService.cs
 !QuotaService.cs
 !MessageScheduleService.cs
 !DeviceService.cs
