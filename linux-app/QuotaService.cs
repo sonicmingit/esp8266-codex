@@ -97,6 +97,16 @@ public sealed class QuotaService : BackgroundService
         finally { refreshGate.Release(); }
     }
 
+    public async Task RefreshAfterLogin(CancellationToken ct)
+    {
+        lock (gate)
+        {
+            cooldowns.Remove("codex");
+            states["codex"] = states["codex"] with { NextAttemptAt = null };
+        }
+        await Refresh(true, ct);
+    }
+
     async Task RefreshProvider(string provider, bool manual, CancellationToken ct)
     {
         var config = settings.Current;
@@ -118,7 +128,7 @@ public sealed class QuotaService : BackgroundService
         try
         {
             windows = provider == "codex" && config.CodexMode == "managed"
-                ? await rpc.Fetch(config.CodexHome, ct) : await FetchReadonly(config, provider, ct);
+                ? await rpc.Fetch(Credentials.CodexHome(config), ct) : await FetchReadonly(config, provider, ct);
         }
         catch (BridgeException e) { error = e.Message; if (e.StatusCode == 429) backoff = 300; }
         catch (HttpRequestException) { error = "额度服务连接失败，请检查网络或代理设置。"; }

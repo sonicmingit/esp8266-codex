@@ -5,6 +5,7 @@ namespace AIClockBridge.Linux;
 
 public static class Credentials
 {
+    public static string CodexHome(BridgeSettings s) => s.CodexMode == "managed" ? s.CodexManagedHome : s.CodexHome;
     public static string FilePath(BridgeSettings s, string provider) => Path.Combine(provider == "codex" ? s.CodexHome : s.ClaudeHome,
         provider == "codex" ? "auth.json" : ".credentials.json");
 
@@ -12,7 +13,7 @@ public static class Credentials
     // Only a one-way fingerprint is persisted, never the credential contents.
     public static string Identity(BridgeSettings s, string provider)
     {
-        var path = FilePath(s, provider);
+        var path = provider == "codex" ? Path.Combine(CodexHome(s), "auth.json") : FilePath(s, provider);
         var prefix = path + (provider == "codex" ? s.CodexMode : "readonly");
         try
         {

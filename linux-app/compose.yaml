@@ -2,8 +2,10 @@ services:
   aiclock:
     build:
       context: .
-      target: readonly
-    image: aiclock-linux:readonly
+      target: managed
+      args:
+        CODEX_VERSION: "${AICLOCK_CODEX_VERSION:-0.162.0}"
+    image: aiclock-linux:latest
     restart: unless-stopped
     user: "${AICLOCK_UID:-1000}:${AICLOCK_GID:-1000}"
     ports:
@@ -14,6 +16,7 @@ services:
       AICLOCK_PORT: "8765"
       AICLOCK_DATA_DIR: /data
       AICLOCK_CODEX_HOME: /credentials/codex
+      AICLOCK_MANAGED_CODEX_HOME: /data/codex
       AICLOCK_CLAUDE_HOME: /credentials/claude
       AICLOCK_CODEX_MODE: readonly
       AICLOCK_ADVERTISED_HOST: "${AICLOCK_ADVERTISED_HOST:-}"

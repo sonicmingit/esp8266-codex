@@ -19,7 +19,20 @@ public sealed class SettingsStore
         DataDirectory = Path.GetFullPath(Environment.GetEnvironmentVariable("AICLOCK_DATA_DIR") ?? Path.Combine(AppContext.BaseDirectory, "data"));
         Directory.CreateDirectory(DataDirectory);
         var path = Path.Combine(DataDirectory, "settings.json");
-        try { current = JsonSerializer.Deserialize<BridgeSettings>(File.ReadAllText(path), JsonValues.Options) ?? new(); }
+        try
+        {
+            var json = File.ReadAllText(path);
+            current = JsonSerializer.Deserialize<BridgeSettings>(json, JsonValues.Options) ?? new();
+            using var document = JsonDocument.Parse(json);
+            if (!document.RootElement.TryGetProperty("codexManagedHome", out _))
+                current = current with
+                {
+                    CodexHome = current.CodexMode == "managed"
+                        ? Environment.GetEnvironmentVariable("AICLOCK_CODEX_HOME") ?? "/credentials/codex" : current.CodexHome,
+                    CodexManagedHome = current.CodexMode == "managed"
+                        ? current.CodexHome : Environment.GetEnvironmentVariable("AICLOCK_MANAGED_CODEX_HOME") ?? Path.Combine(DataDirectory, "codex")
+                };
+        }
         catch (FileNotFoundException) { current = new(); }
         catch (JsonException) { throw new BridgeException("settings.json 格式错误，请修复配置文件后重启。"); }
         if (current.Devices is null) current = current with { Devices = [] };
@@ -30,6 +43,7 @@ public sealed class SettingsStore
         if (!File.Exists(path)) current = current with
         {
             CodexHome = Environment.GetEnvironmentVariable("AICLOCK_CODEX_HOME") ?? current.CodexHome,
+            CodexManagedHome = Environment.GetEnvironmentVariable("AICLOCK_MANAGED_CODEX_HOME") ?? Path.Combine(DataDirectory, "codex"),
             ClaudeHome = Environment.GetEnvironmentVariable("AICLOCK_CLAUDE_HOME") ?? current.ClaudeHome,
             CodexMode = Environment.GetEnvironmentVariable("AICLOCK_CODEX_MODE") ?? current.CodexMode,
             AdvertisedHost = Environment.GetEnvironmentVariable("AICLOCK_ADVERTISED_HOST") ?? ""
@@ -93,9 +107,13 @@ public sealed class SettingsStore
             if (device.NightModeEnabled && device.NightStart == device.NightEnd)
                 throw new BridgeException("夜间模式开始和结束时间不能相同。");
         }
-        foreach (var path in new[] { s.CodexHome, s.ClaudeHome })
+        foreach (var path in new[] { s.CodexHome, s.CodexManagedHome, s.ClaudeHome })
             if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path))
                 throw new BridgeException("凭据目录必须是绝对路径，不能填写 ~。");
+        var pathComparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(s.CodexHome)),
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath(s.CodexManagedHome)), pathComparison))
+            throw new BridgeException("只读与自动续期模式必须使用不同的 Codex 凭据目录。");
         if (!string.IsNullOrEmpty(s.AdvertisedHost)) ValidateHost(s.AdvertisedHost);
     }
 

@@ -11,7 +11,7 @@
 - **多屏幕管理**：添加多台小屏幕，分别打开设备网页、测试连接和配对，也可指定目标上传宠物和调整显示模式/亮度。
 - **页面定时与夜间亮度**：为每台屏幕单独设置每日开屏/关屏时间、开屏页面模式，以及夜间时段和夜间亮度。
 - **Codex 定时消息**：每天指定时间使用所选模型发送一条简单消息，显示回复、执行状态和发送后的额度窗口；支持立即发送与最近 20 条记录。
-- **基础设置**：对外服务地址、监听端口、可调额度刷新间隔（1 分钟至 24 小时）、凭据目录。
+- **基础设置**：对外服务地址、监听端口、可调额度刷新间隔（1 分钟至 24 小时）、分别保存的只读与自动续期凭据目录。
 
 不包含股票、音乐、网速、CPU/内存监控、USB 串口、工作状态日志采集。`/status` 中状态为 idle/offline，宠物保持待机。普通额度查询和凭据续期不会调用模型；只有手动发送或启用定时消息后才会发起文本请求。
 
@@ -21,7 +21,7 @@
 
 ```bash
 cd /你的项目路径/esp8266-codex/linux-app
-bash deploy.sh readonly
+bash deploy.sh
 ```
 
 脚本在第一次运行时生成 `.env`，使用当前用户的 UID/GID，并自动识别当前用户的 `.codex`、`.claude` 目录；来源不存在时挂载空目录。默认启用 Codex，Claude 可在网页开启。
@@ -70,43 +70,35 @@ Docker 内部始终监听 8765；`AICLOCK_HOST_PORT` 控制宿主机端口。改
 
 但是，只读映射不会给凭据续期。如果宿主机 CLI 长期没有使用，access token 失效后查询会失败。此时在宿主机重新登录/使用 CLI 更新凭据，或者使用下面的独立自动续期模式。账户登出、凭据撤销等情况仍需要重新登录。
 
-## 2. Docker 自动续期模式
+## 2. Codex 模式切换与网页登录
 
-自动续期镜像附带 Codex CLI（默认固定 `0.162.0`），使用 `/data/codex` 作为**服务专用的可写目录**。不会在宿主机只读挂载目录中续期。
+同一个 Docker 镜像始终包含 Codex CLI 和只读额度查询组件。设置页分别保存两套目录：只读模式默认读取 `/credentials/codex`，自动续期模式默认使用持久化的 `/data/codex`。切换查询方式会自动切换目录，不需要反复改路径。用户也可以分别调整这两项目录。
 
 ```bash
 cd /你的项目路径/esp8266-codex/linux-app
-bash deploy.sh managed
-bash codex-login.sh
+bash deploy.sh
 ```
 
-登录脚本暂停服务，启动共用持久化数据目录的一次性容器，执行 `codex login --device-auth`；根据终端显示的链接与设备码，在浏览器登录。退出后脚本重新启动服务。若账户尚未启用设备码登录，需要按官方登录指引启用；设备码不可用时可在服务专用目录中用正常的 `codex login` 完成浏览器登录。
+在“基础设置”选择“自动续期”，保存后点击“开始登录”。页面控制台会显示设备验证提示；完成 ChatGPT 设备验证后，服务会自动检测 CLI 登录结束并刷新额度。登录凭据保存在自动续期目录，与只读目录分开。
 
-在网页确认：
+服务通过 stdio 启动短暂的 `codex app-server` 会话，读取账户类型与额度窗口。认证失效时尝试刷新 token。普通额度刷新不会发送模型消息；额度查询、模型列表、消息发送和网页登录使用所选的自动续期目录。
 
-- Codex 模式：**自动续期**。
-- Codex 凭据目录：**`/data/codex`**。
-
-如果之前运行过只读模式，这两项需要在网页手动修改并保存，因为持久化设置优先于首次启动默认值。
-
-服务通过 stdio 启动短暂的 `codex app-server` 会话，完成 initialize/initialized 握手，读取账户类型与 `account/rateLimits/read`。认证失效时调用一次 `account/read` 的 `refreshToken: true`，再重试额度查询。CLI 自带的认证恢复也可能在请求期间处理续期。刷新后的凭据保存到专用目录；普通额度刷新不会发送 `thread/start` 或 `turn/start`。同一服务进程中的模型列表、额度查询和消息发送共用目录锁，避免并发续期。
-
-**不要把同一份 refresh token 的副本交给宿主机与服务并发续期。** 推荐按上述步骤为服务单独登录。只读模式可以共享宿主机目录；自动续期模式应使用独立目录。不要并行运行多个续期服务或在续期查询期间另行登录同一目录。浏览器页面不会读取、显示或上传 token。
+**不要把同一份 refresh token 的副本交给宿主机与服务并发续期。** 推荐使用页面登录生成服务专用凭据。只读模式可以共享宿主机目录；自动续期模式应使用独立目录。不要并行运行多个续期服务或在续期查询期间另行登录同一目录。浏览器页面不会读取、显示或上传 token。
 
 切换模式和升级时持续使用对应的 Compose 参数：
 
 ```bash
-# 自动续期版更新 / 查看日志 / 停止
-docker compose -f compose.yaml -f compose.managed.yaml up -d --build
-docker compose -f compose.yaml -f compose.managed.yaml logs --tail=100 aiclock
-docker compose -f compose.yaml -f compose.managed.yaml down
+# 更新服务 / 查看日志 / 停止
+docker compose -f compose.yaml up -d --build
+docker compose -f compose.yaml logs --tail=100 aiclock
+docker compose -f compose.yaml down
 ```
 
-`down` 不会删除绑定的数据目录。默认轻量只读镜像没有 Codex CLI，在网页改为自动续期前，先切换到 managed 镜像。`AICLOCK_CODEX_VERSION` 可在 `.env` 修改，重新构建后生效；升级后应验证账户接口兼容性。
+`down` 不会删除绑定的数据目录。旧命令 `bash deploy.sh readonly` 和 `bash deploy.sh managed` 仍会兼容，但都会部署包含两种模式组件的同一镜像。`AICLOCK_CODEX_VERSION` 可在 `.env` 修改，重新构建后生效。
 
 ## 3. Linux 原生运行
 
-需要 .NET 10 SDK。自动续期模式另外需要 Codex CLI；只读模式无需 CLI 可执行文件。
+需要 .NET 10 SDK。自动续期模式需要 Codex CLI；只读额度查询不依赖 CLI。
 
 ```bash
 cd /你的项目路径/esp8266-codex/linux-app
@@ -123,15 +115,7 @@ cd bin/publish
 AICLOCK_DATA_DIR=/home/你的用户/aiclock-data dotnet AIClockBridge.Linux.dll
 ```
 
-自动续期模式的原生登录示例（先停服务，使用独立目录）：
-
-```bash
-mkdir -p /home/你的用户/aiclock-data/codex
-chmod 700 /home/你的用户/aiclock-data/codex
-CODEX_HOME=/home/你的用户/aiclock-data/codex codex -c 'cli_auth_credentials_store="file"' login --device-auth
-```
-
-然后启动服务，在网页选择自动续期并填写这个专用目录。`AICLOCK_CODEX_EXECUTABLE` 可以指定 CLI 可执行文件的完整路径；不支持在此变量中填一整段 shell 命令。
+自动续期登录也可直接从设置页启动。原生运行时在“自动续期凭据目录”填入独立可写目录；`AICLOCK_CODEX_EXECUTABLE` 可以指定 CLI 可执行文件的完整路径，不支持在此变量中填一整段 shell 命令。
 
 ### systemd 常驻示例
 
@@ -179,14 +163,14 @@ journalctl -u aiclock --no-pager -n 50
 
 ## 5. Codex 定时消息
 
-需要自动续期版镜像或原生安装的 Codex CLI，并在独立可写目录登录自己的 ChatGPT Plus 账号。只读模式不支持发送。已有只读 Docker 部署可按第 2 节切换 managed 镜像并登录，再在基础设置启用 Codex、选择自动续期与服务目录。
+自动续期模式需要 Codex CLI，并在独立可写目录登录 ChatGPT 账号。只读模式不支持发送。Docker 部署始终包含两种模式；已有部署重新运行 `bash deploy.sh` 更新后，在基础设置切换到自动续期并从页面启动登录即可。
 
 在“定时消息”页面：
 
 1. 点击“加载可用模型”，从 CLI 返回的文本模型列表中选择模型。
 2. 设置每日发送时间和简单消息，例如“只回复 OK。”，保存计划。
 3. 点击“立即发送已保存消息”验证模型回复；定时发送不必开启即可手动发送。
-4. 勾选每日发送并保存。页面显示服务时区和下次计划时间；Docker 固定使用北京时间 `Asia/Shanghai`（UTC+8）。已有部署重新运行 `bash deploy.sh managed` 后生效，原有每日时分设置会按北京时间解释。
+4. 勾选每日发送并保存。页面显示服务时区和下次计划时间；Docker 固定使用北京时间 `Asia/Shanghai`（UTC+8）。已有部署重新运行 `bash deploy.sh` 更新后生效，原有每日时分设置会按北京时间解释。
 
 每次使用一个独立的临时会话，不携带历史对话；消息最长 1000 字符，回复上限 16000 字符。发送最长等待 3 分钟，立即发送至少间隔 60 秒。模型不可用、认证失败、限流、超时或服务重启都会记录结果；不会自动重发。浏览器关闭或离开页面不会中断已经提交的请求。默认关闭定时发送。
 
@@ -211,6 +195,8 @@ Claude 插槽为 111×120，Codex 插槽为 120×120；GIF 最多 8 帧，与当
 | GET | `/status` | 现有 ESP8266 固件兼容数据 |
 | GET | `/api/usage` | 额度、窗口、更新时间、过期状态、错误 |
 | POST | `/api/usage/refresh` | 在节流允许时手动刷新 |
+| GET | `/api/codex/login` | 查看网页设备登录状态与控制台输出 |
+| POST | `/api/codex/login/start` / `/cancel` | 启动 / 取消自动续期模式登录 |
 | GET | `/api/messages` | 发送计划、服务时区、下次执行时间和最近 20 条结果 |
 | GET | `/api/messages/models` | 自动续期模式的 Codex 可用文本模型列表 |
 | POST | `/api/messages/schedule` | 保存计划，`{"enabled":false,"time":"08:00","model":"账号可用模型ID","message":"只回复 OK。"}` |

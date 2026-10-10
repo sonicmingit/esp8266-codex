@@ -9,6 +9,8 @@ namespace AIClockBridge.Linux;
 public sealed class CodexRpc(string executable)
 {
     static readonly ConcurrentDictionary<string, SemaphoreSlim> homes = new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    internal static SemaphoreSlim HomeLock(string home) =>
+        homes.GetOrAdd(Path.TrimEndingDirectorySeparator(Path.GetFullPath(home)), _ => new(1));
 
     public Task<(QuotaWindow? Primary, QuotaWindow? Weekly)> Fetch(string home, CancellationToken ct) =>
         WithSession(home, null, TimeSpan.FromSeconds(45), async session =>
@@ -115,7 +117,7 @@ public sealed class CodexRpc(string executable)
 
     async Task<T> WithSession<T>(string home, string? workspace, TimeSpan duration, Func<Session, Task<T>> action, CancellationToken ct)
     {
-        var semaphore = homes.GetOrAdd(Path.TrimEndingDirectorySeparator(Path.GetFullPath(home)), _ => new(1));
+        var semaphore = HomeLock(home);
         await semaphore.WaitAsync(ct);
         try
         {

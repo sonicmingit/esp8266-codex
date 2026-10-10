@@ -74,8 +74,16 @@
             </section>
             <section class="panel"><div class="panel-title"><span class="section-number">02</span><h2>额度数据来源</h2></div>
               <label class="checkbox-label"><input id="codex-enabled" type="checkbox">启用 Codex 额度查询</label>
-              <label>Codex 凭据目录<input id="codex-home" required autocomplete="off"><small>目录中的 auth.json 需要包含 ChatGPT 登录凭据。</small></label>
               <label>Codex 查询方式<select id="codex-mode"><option value="readonly">只读映射 · 使用已有凭据</option><option value="managed">自动续期 · Codex App Server</option></select></label>
+              <div id="codex-readonly-fields"><label>只读模式凭据目录<input id="codex-home" autocomplete="off"><small>读取此目录中的 auth.json，不会修改或续期宿主机凭据。</small></label></div>
+              <div id="codex-managed-fields" hidden>
+                <label>自动续期模式凭据目录<input id="codex-managed-home" autocomplete="off"><small>独立保存服务账号；与只读目录分开，切换模式时会自动使用对应目录。</small></label>
+                <div class="login-console" aria-labelledby="codex-login-title">
+                  <div class="login-console-head"><div><strong id="codex-login-title">服务账号登录</strong><span id="codex-login-status" role="status">尚未启动</span></div><span class="console-lamp" aria-hidden="true"></span></div>
+                  <pre id="codex-login-output" aria-live="polite">点击“开始登录”，然后按控制台提示完成 ChatGPT 设备验证。</pre>
+                  <div class="login-console-actions"><button id="codex-login-start" class="button primary" type="button">开始登录</button><button id="codex-login-cancel" class="button" type="button" disabled>取消</button><a id="codex-login-link" class="button" target="_blank" rel="noopener noreferrer" hidden>打开验证页面 ↗</a></div>
+                </div>
+              </div>
               <p id="mode-hint" class="hint"></p>
               <div class="source-divider"></div>
               <label class="checkbox-label"><input id="claude-enabled" type="checkbox">启用 Claude 额度查询</label>

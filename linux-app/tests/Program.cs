@@ -87,10 +87,10 @@ SettingsStore Store(string name)
     Environment.SetEnvironmentVariable("AICLOCK_DATA_DIR", path);
     Environment.SetEnvironmentVariable("AICLOCK_CODEX_EXECUTABLE", Environment.ProcessPath);
     var store = new SettingsStore();
-    var codex = Path.Combine(path, "codex"); var claude = Path.Combine(path, "claude");
-    Directory.CreateDirectory(codex); Directory.CreateDirectory(claude);
+    var codex = Path.Combine(path, "codex-readonly"); var managedCodex = Path.Combine(path, "codex-managed"); var claude = Path.Combine(path, "claude");
+    Directory.CreateDirectory(codex); Directory.CreateDirectory(managedCodex); Directory.CreateDirectory(claude);
     File.WriteAllText(Path.Combine(codex, "auth.json"), "{\"tokens\":{\"access_token\":\"fake-access-one\",\"account_id\":\"fake-account\"}}");
-    store.Save(store.Current with { CodexHome = codex, ClaudeHome = claude, ClaudeEnabled = false }); return store;
+    store.Save(store.Current with { CodexHome = codex, CodexManagedHome = managedCodex, ClaudeHome = claude, ClaudeEnabled = false }); return store;
 }
 void Check(bool value, string message) { if (!value) throw new Exception(message); }
 async Task ExpectError(Func<Task> run, string part)

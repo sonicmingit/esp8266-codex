@@ -2,7 +2,7 @@
 const $ = id => document.getElementById(id);
 const state = { usage: null, settings: null, runtime: null, pets: [], selected: null, page: 0, total: 0, petLoaded: false, deviceTargetId: '', deviceStatuses: {}, deviceInfos: {} };
 const escapeHtml = value => { const node = document.createElement('span'); node.textContent = String(value ?? ''); return node.innerHTML; };
-let toastTimer, previewSequence = 0, petSearchSequence = 0, polling = false;
+let toastTimer, previewSequence = 0, petSearchSequence = 0, polling = false, loginRefreshedAt = sessionStorage.getItem('codex-login-refreshed-at');
 let messageFormLoaded = false, messagePolling = false, messageSending = false, messagesState = null;
 function toast(message, error = false) { clearTimeout(toastTimer); $('toast').textContent = message; $('toast').className = `toast${error ? ' error' : ''}`; $('toast').hidden = false; toastTimer = setTimeout(() => $('toast').hidden = true, error ? 9000 : 5000); }
 async function api(path, body) {
@@ -52,7 +52,33 @@ async function loadUsage() {
   finally { polling = false; }
 }
 $('refresh').onclick = () => action($('refresh'), async () => { state.usage = await api('/api/usage/refresh', {}); renderUsage(); }, '查询完成。频繁点击会沿用缓存，接口限流时自动退避。');
-function updateModeHint() { $('mode-hint').textContent = $('codex-mode').value === 'managed' ? '需要已安装 Codex CLI，以及独立、可写且已登录的服务目录。请勿与正在使用的宿主机凭据共用。登录步骤见中文说明。' : '每次查询重新读取 auth.json。宿主机更新凭据后自动生效；此模式不会写入或续期凭据。'; }
+function updateModeHint() {
+  const managed = $('codex-mode').value === 'managed';
+  $('codex-readonly-fields').hidden = managed; $('codex-managed-fields').hidden = !managed;
+  $('codex-home').required = !managed; $('codex-managed-home').required = managed;
+  $('mode-hint').textContent = managed ? '服务会在后台自动续期。需要首次登录时，直接在下方控制台启动设备登录。' : '每次查询重新读取只读目录中的 auth.json；此模式不会写入或续期凭据。';
+  renderServiceMode($('codex-mode').value);
+}
+async function loadCodexLogin() {
+  try {
+    const data = await api('/api/codex/login');
+    $('codex-login-output').textContent = data.output || (data.error ? data.error : '等待设备登录…');
+    $('codex-login-output').scrollTop = $('codex-login-output').scrollHeight;
+    const foundUrl = (data.output || '').match(/https:\/\/auth\.openai\.com\/[^\s"'<>]+/);
+    const loginUrl = foundUrl?.[0].replace(/[),.;]+$/, '');
+    $('codex-login-link').hidden = !loginUrl;
+    if (loginUrl) $('codex-login-link').href = loginUrl;
+    $('codex-login-status').textContent = data.running ? '等待完成设备验证' : data.startedAt ? (data.exitCode === 0 ? '登录进程已完成' : `登录进程已结束${data.exitCode == null ? '' : ` · 退出码 ${data.exitCode}`}`) : '尚未启动';
+    $('codex-login-start').disabled = Boolean(data.running);
+    $('codex-login-cancel').disabled = !data.running;
+    if (!data.running && data.startedAt && data.exitCode === 0 && loginRefreshedAt !== data.startedAt) {
+      loginRefreshedAt = data.startedAt;
+      sessionStorage.setItem('codex-login-refreshed-at', data.startedAt);
+      try { state.usage = await api('/api/codex/login/refresh', {}); renderUsage(); toast('登录完成，已刷新 Codex 额度。'); }
+      catch (error) { toast(`登录完成，但额度刷新失败：${error.message}`, true); }
+    }
+  } catch { /* Login status is unavailable until the service is reachable. */ }
+}
 function renderServiceMode(mode) {
   $('service-mode').textContent = `Codex 模式 · ${mode}`;
   $('service-mode').classList.toggle('managed', mode === 'managed');
@@ -136,7 +162,7 @@ async function loadSettings() {
   const data = await api('/api/settings'); state.settings = data.settings; state.runtime = data.runtime; const s = data.settings;
   $('advertised-host').value = s.advertisedHost; $('port').value = data.runtime.portFromEnvironment || data.runtime.docker ? data.runtime.port : s.port;
   $('refresh-minutes').value = Number((s.refreshSeconds / 60).toFixed(2)); $('codex-enabled').checked = s.codexEnabled; $('claude-enabled').checked = s.claudeEnabled;
-  $('codex-home').value = s.codexHome; $('claude-home').value = s.claudeHome; $('codex-mode').value = s.codexMode;
+  $('codex-home').value = s.codexHome; $('codex-managed-home').value = s.codexManagedHome; $('claude-home').value = s.claudeHome; $('codex-mode').value = s.codexMode;
   renderServiceMode(s.codexMode);
   $('port').disabled = data.runtime.portFromEnvironment || data.runtime.docker;
   $('port-hint').textContent = data.runtime.docker ? `容器内部监听 ${data.runtime.port}。对外端口在 Compose 的 AICLOCK_HOST_PORT 中修改，然后重新创建容器。`
@@ -144,8 +170,19 @@ async function loadSettings() {
   updateModeHint(); renderDevices();
 }
 $('codex-mode').onchange = updateModeHint;
+$('codex-login-start').onclick = async () => {
+  $('codex-login-start').disabled = true;
+  try { await api('/api/codex/login/start', {}); await loadCodexLogin(); toast('设备登录已启动，请按控制台提示完成验证。'); }
+  catch (error) { toast(error.message, true); await loadCodexLogin(); }
+};
+$('codex-login-cancel').onclick = async () => {
+  $('codex-login-cancel').disabled = true;
+  try { await api('/api/codex/login/cancel', {}); await loadCodexLogin(); toast('登录流程已取消。'); }
+  catch (error) { toast(error.message, true); await loadCodexLogin(); }
+};
+setInterval(() => { if ($('codex-mode').value === 'managed') loadCodexLogin(); }, 1200);
 $('settings-form').onsubmit = event => { event.preventDefault(); action($('save-settings'), async () => {
-  const result = await api('/api/settings', { port: $('port').disabled ? state.settings.port : Number($('port').value), deviceHost: '', devices: state.settings.devices, advertisedHost: $('advertised-host').value.trim(), refreshSeconds: Math.round(Number($('refresh-minutes').value) * 60), codexEnabled: $('codex-enabled').checked, claudeEnabled: $('claude-enabled').checked, codexMode: $('codex-mode').value, codexHome: $('codex-home').value.trim(), claudeHome: $('claude-home').value.trim(), messageSchedule: messagesState?.schedule ?? state.settings.messageSchedule });
+  const result = await api('/api/settings', { port: $('port').disabled ? state.settings.port : Number($('port').value), deviceHost: '', devices: state.settings.devices, advertisedHost: $('advertised-host').value.trim(), refreshSeconds: Math.round(Number($('refresh-minutes').value) * 60), codexEnabled: $('codex-enabled').checked, claudeEnabled: $('claude-enabled').checked, codexMode: $('codex-mode').value, codexHome: $('codex-home').value.trim(), codexManagedHome: $('codex-managed-home').value.trim(), claudeHome: $('claude-home').value.trim(), messageSchedule: messagesState?.schedule ?? state.settings.messageSchedule });
   await loadSettings(); await loadUsage(); await loadMessages(); toast(result.restartRequired ? '设置已保存。监听端口需重启服务后生效，请同步更新设备服务地址。' : '设置已保存，后台将按刷新间隔查询。');
 }); };
 function selectedDeviceId() { if (!state.deviceTargetId) throw new Error('请先添加并选择一台小屏幕。'); return state.deviceTargetId; }
@@ -227,7 +264,7 @@ function renderMessages(data) {
   $('message-configure').hidden = data.canSend;
   $('message-model').disabled = !data.canSend;
   if (!$('message-model').value && $('message-model').options.length === 1) $('message-model').options[0].textContent = data.canSend ? '请加载账号可用模型' : mode === 'readonly' ? 'readonly 模式暂不支持模型加载' : '请先启用 Codex';
-  $('message-mode-hint').textContent = data.canSend ? '发送将使用此服务目录中登录的订阅账号。若加载失败，请检查 Codex CLI 和登录状态。' : 'Docker 请先部署 managed 镜像，在独立可写目录登录订阅账号，然后保存基础设置。';
+  $('message-mode-hint').textContent = data.canSend ? '发送将使用自动续期目录中登录的订阅账号。若加载失败，请检查登录状态。' : 'Docker 统一部署已包含 Codex CLI；请在基础设置启用 Codex 并选择自动续期，然后从页面完成登录。';
   $('message-models').disabled = !data.canSend;
   $('message-send').disabled = messageSending || data.running || !data.canSend || !data.schedule.model;
   $('message-runs').innerHTML = data.runs.length ? data.runs.map(run => {

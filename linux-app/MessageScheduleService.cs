@@ -52,7 +52,7 @@ public sealed class MessageScheduleService : BackgroundService
     {
         var config = settings.Current;
         RequireManaged(config);
-        return rpc.Models(config.CodexHome, ct);
+        return rpc.Models(Credentials.CodexHome(config), ct);
     }
 
     public async Task<MessageRun?> Run(bool scheduled, CancellationToken ct)
@@ -88,7 +88,7 @@ public sealed class MessageScheduleService : BackgroundService
             }
             try
             {
-                var result = await rpc.Send(config.CodexHome, Path.Combine(settings.DataDirectory, "message-workspace"), plan.Model, plan.Message, ct);
+                var result = await rpc.Send(Credentials.CodexHome(config), Path.Combine(settings.DataDirectory, "message-workspace"), plan.Model, plan.Message, ct);
                 run = run with { Status = "succeeded", FinishedAt = clock.GetUtcNow(), Reply = result.Reply,
                     Primary = result.Primary, Weekly = result.Weekly, QuotaError = result.QuotaError };
                 if (result.QuotaError == null) quota.RecordCodexUsage(config, result.Primary, result.Weekly);

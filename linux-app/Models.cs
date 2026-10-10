@@ -12,7 +12,9 @@ public sealed record BridgeSettings
     public bool CodexEnabled { get; init; } = true;
     public bool ClaudeEnabled { get; init; }
     public string CodexMode { get; init; } = "readonly";
+    // Legacy readonly path is retained as CodexHome so existing settings migrate cleanly.
     public string CodexHome { get; init; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex");
+    public string CodexManagedHome { get; init; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aiclock", "codex");
     public string ClaudeHome { get; init; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude");
     public int RefreshSeconds { get; init; } = 120;
     public MessageSchedule MessageSchedule { get; init; } = new();

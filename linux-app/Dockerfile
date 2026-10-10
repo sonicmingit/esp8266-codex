@@ -3,7 +3,7 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0-noble AS build
 WORKDIR /src
 COPY AIClockBridge.Linux.csproj ./
 RUN dotnet restore
-COPY Models.cs SettingsStore.cs QuotaParser.cs Credentials.cs CodexRpc.cs QuotaService.cs MessageScheduleService.cs DeviceService.cs DeviceScheduleService.cs PetdexService.cs Program.cs ./
+COPY Models.cs SettingsStore.cs QuotaParser.cs Credentials.cs CodexRpc.cs CodexLoginService.cs QuotaService.cs MessageScheduleService.cs DeviceService.cs DeviceScheduleService.cs PetdexService.cs Program.cs ./
 COPY wwwroot ./wwwroot
 RUN dotnet publish -c Release -o /out --no-restore /p:UseAppHost=false
 
@@ -27,5 +27,5 @@ RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm ca-c
     && codex --version \
     && npm cache clean --force \
     && rm -rf /var/lib/apt/lists/*
-ENV AICLOCK_CODEX_MODE=managed AICLOCK_CODEX_HOME=/data/codex
+ENV AICLOCK_CODEX_MODE=readonly AICLOCK_CODEX_HOME=/credentials/codex AICLOCK_MANAGED_CODEX_HOME=/data/codex
 USER $APP_UID

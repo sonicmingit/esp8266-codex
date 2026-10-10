@@ -10,6 +10,7 @@ builder.Services.AddSingleton(settings);
 // Distinct clients keep quota timeout and large pet/device transfers independent.
 builder.Services.AddSingleton(sp => new QuotaService(settings, new HttpClient { Timeout = TimeSpan.FromSeconds(25) }));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<QuotaService>());
+builder.Services.AddSingleton<CodexLoginService>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<MessageScheduleService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<MessageScheduleService>());
@@ -47,6 +48,10 @@ app.MapGet("/healthz", () => Results.Ok(new { status = "ok", version = "0.1.0" }
 app.MapGet("/status", (QuotaService quota) => quota.FirmwareStatus());
 app.MapGet("/api/usage", (QuotaService quota) => quota.Snapshot());
 app.MapPost("/api/usage/refresh", async (QuotaService quota, CancellationToken ct) => { await quota.Refresh(true, ct); return quota.Snapshot(); });
+app.MapGet("/api/codex/login", (CodexLoginService login) => login.Snapshot());
+app.MapPost("/api/codex/login/start", (CodexLoginService login, CancellationToken ct) => login.Start(settings.Current, ct));
+app.MapPost("/api/codex/login/cancel", (CodexLoginService login) => login.Cancel());
+app.MapPost("/api/codex/login/refresh", async (QuotaService quota, CancellationToken ct) => { await quota.RefreshAfterLogin(ct); return quota.Snapshot(); });
 app.MapGet("/api/messages", (MessageScheduleService messages) => messages.Snapshot());
 app.MapGet("/api/messages/models", (MessageScheduleService messages, CancellationToken ct) => messages.Models(ct));
 app.MapPost("/api/messages/schedule", (MessageSchedule next) =>
