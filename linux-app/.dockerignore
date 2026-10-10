@@ -6,6 +6,7 @@
 !Credentials.cs
 !CodexRpc.cs
 !QuotaService.cs
+!MessageScheduleService.cs
 !DeviceService.cs
 !DeviceScheduleService.cs
 !PetdexService.cs
