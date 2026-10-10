@@ -10,6 +10,9 @@ builder.Services.AddSingleton(settings);
 // Distinct clients keep quota timeout and large pet/device transfers independent.
 builder.Services.AddSingleton(sp => new QuotaService(settings, new HttpClient { Timeout = TimeSpan.FromSeconds(25) }));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<QuotaService>());
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<MessageScheduleService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<MessageScheduleService>());
 builder.Services.AddSingleton(new DeviceService(settings, new HttpClient { Timeout = Timeout.InfiniteTimeSpan }));
 builder.Services.AddSingleton<DeviceScheduleService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DeviceScheduleService>());
@@ -44,6 +47,14 @@ app.MapGet("/healthz", () => Results.Ok(new { status = "ok", version = "0.1.0" }
 app.MapGet("/status", (QuotaService quota) => quota.FirmwareStatus());
 app.MapGet("/api/usage", (QuotaService quota) => quota.Snapshot());
 app.MapPost("/api/usage/refresh", async (QuotaService quota, CancellationToken ct) => { await quota.Refresh(true, ct); return quota.Snapshot(); });
+app.MapGet("/api/messages", (MessageScheduleService messages) => messages.Snapshot());
+app.MapGet("/api/messages/models", (MessageScheduleService messages, CancellationToken ct) => messages.Models(ct));
+app.MapPost("/api/messages/schedule", (MessageSchedule next) =>
+{
+    settings.Save(settings.Current with { MessageSchedule = next });
+    return Results.Ok(new { ok = true });
+});
+app.MapPost("/api/messages/send", (MessageScheduleService messages, IHostApplicationLifetime lifetime) => messages.Run(false, lifetime.ApplicationStopping));
 app.MapGet("/api/settings", () => new { settings = settings.Current, runtime = new { port = settings.EffectivePort, portFromEnvironment = settings.PortFromEnvironment, docker = settings.Docker } });
 app.MapPost("/api/settings", (BridgeSettings next, QuotaService quota) =>
 {

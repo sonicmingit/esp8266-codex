@@ -3,7 +3,7 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0-noble AS build
 WORKDIR /src
 COPY AIClockBridge.Linux.csproj ./
 RUN dotnet restore
-COPY Models.cs SettingsStore.cs QuotaParser.cs Credentials.cs CodexRpc.cs QuotaService.cs DeviceService.cs DeviceScheduleService.cs PetdexService.cs Program.cs ./
+COPY Models.cs SettingsStore.cs QuotaParser.cs Credentials.cs CodexRpc.cs QuotaService.cs MessageScheduleService.cs DeviceService.cs DeviceScheduleService.cs PetdexService.cs Program.cs ./
 COPY wwwroot ./wwwroot
 RUN dotnet publish -c Release -o /out --no-restore /p:UseAppHost=false
 

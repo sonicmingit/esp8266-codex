@@ -21,22 +21,29 @@
   <img src="docs/images/hero.jpg" width="640" alt="AI Mac 小屏幕">
 </p>
 
-一块 240×240 的复古小电视，放在桌上实时显示 **Claude Code / Codex CLI 在干什么、额度还剩多少**。不需要任何 API key：数据来自本机已有的 CLI 登录凭据和会话日志，由配套的 Mac / Windows 桥接程序提供给设备；Windows 版还支持 USB 有线优先，拔线后自动回退局域网。
+一块 240×240 的复古小电视，放在桌上实时显示 **Claude Code / Codex CLI 在干什么、额度还剩多少**。不需要额外 API key：数据来自本机已有的 CLI 登录凭据和会话日志，由 Mac / Windows 桌面桥接程序或 Linux Bridge 提供给设备。Windows 版支持 USB 有线优先，Linux Bridge 提供网页控制台、多设备管理和定时消息。
 
-## 项目归属与复刻说明
+## 项目归属与本分支更新
 
-本仓库复刻自 [pengchujin/esp8266-ai](https://github.com/pengchujin/esp8266-ai)，源码、硬件设计和原始项目贡献归属于原作者及上游仓库。本仓库是 sonicmingit 的个人自用修改分支，不改变上游项目的归属，也不代表上游作者。
+本仓库基于原作者的 [pengchujin/esp8266-ai](https://github.com/pengchujin/esp8266-ai)。上游项目的 ESP8266 硬件与固件、Mac / Windows 桥接程序，以及桌宠、音乐、网速等原有功能归属于原作者及上游贡献者。本分支由 sonicmingit 维护，不改变上游归属，也不代表上游作者。详细版权与许可见 [NOTICE.md](NOTICE.md)。
 
-本分支主要做了以下简单更新：
+本分支跟进并整理了上游已公开的修复，同时增加个人使用所需的扩展：
 
-- 合并并整理上游 Pull Request #2、#10、#11、#16、#19、#21 中适合本设备的修复与功能。
-- Windows 客户端增加 CH340/CH343 USB 串口自动识别、#HELLO/#DEVICE 握手、USB 有线优先、断线回退 Wi-Fi/LAN。
-- Windows 客户端通过串口推送额度、状态、网速和股票数据，显示模式与亮度命令优先走 USB。
-- Windows 托盘可将“固定 Codex”设为设备开机默认显示；也可设为 USB 直连握手后关闭设备 WiFi，两个选项均保存到硬件。
-- ESP8266 固件与 Windows 客户端版本统一为 0.4.2-sonic，并提供可刷写固件和 Windows 单文件客户端。
-- 仍保留原项目的 Mac 客户端、网页配置、桌宠和音乐等功能范围；纯 USB 模式下部分需要 HTTP/二进制资源的功能不启用。
+- 合并上游 Pull Request [#2、#10、#11、#16、#19、#21](docs/PR-UPGRADE-2026-08-11.md) 中适合本分支的修复与功能。
+- Windows 客户端支持 CH340/CH343 USB 串口识别、`#HELLO` / `#DEVICE` 握手、有线优先和断线后回退局域网，并可通过串口更新额度、状态、网速与显示设置。
+- 固件与 Windows 客户端提供 `0.4.2-sonic` 版本；托盘设置可保存默认显示模式，也可在 USB 直连时关闭设备 Wi-Fi。
+- 新增 Linux Bridge，支持 Docker 或原生部署、Codex / Claude 额度查询、Petdex 宠物上传、多设备配对与连接测试。
+- Linux Bridge 可为每台小屏幕分别配置显示模式、常规/关闭/夜间亮度与定时开关屏；还可配置 Codex 每日定时消息、手动发送及最近结果记录。
+- 保留上游 Mac 桥接及设备端宠物、音乐、网速等能力；部分功能需要局域网 HTTP 连接。
 
-许可证、版权和第三方依赖条款请以 [上游项目](https://github.com/pengchujin/esp8266-ai) 为准，详见 [NOTICE.md](NOTICE.md)。
+## 项目截图
+
+| 设备实际使用 | Windows 桥接客户端 |
+|---|---|
+| <img src="docs/images/working.jpg" width="440" alt="AI Mac 小屏幕实际使用演示"> | <img src="docs/screenshots/windows-client-usb-priority.png" width="440" alt="Windows 客户端 USB 有线优先托盘菜单"> |
+
+Linux Bridge 的 Docker / 原生安装方式和网页控制台说明见 [Linux Bridge 使用文档](linux-app/README.md)。
+
 ## 功能
 
 | | |
@@ -68,22 +75,11 @@
 
 - **macOS**：`AIClockBridge-*-macOS.dmg`，拖入 Applications（ad-hoc 签名，首次启动需在「系统设置 → 隐私与安全性」允许，并同意本地网络权限）
 - **Windows**：`AIClockBridge-*-Windows-x64.exe`，双击即用；USB 连接 SD2 时自动使用有线数据通道，未插线时使用局域网
+- **Linux**：按 [Linux Bridge 使用文档](linux-app/README.md) 使用 Docker 或原生方式部署；网页控制台可管理设备、查看额度和配置定时消息
 
-桥接程序常驻菜单栏 / 托盘。Windows 会优先自动握手 USB 串口；未连接 USB 时，自动发现并配对同一局域网内的设备——到这里屏幕就活了。
-
-<p align="center">
-  <img src="docs/images/working.jpg" width="640" alt="工作演示">
-</p>
+Mac / Windows 桥接程序常驻菜单栏 / 托盘。Windows 会优先自动握手 USB 串口；未连接 USB 时，自动发现并配对同一局域网内的设备。Linux Bridge 通过网页控制台配对设备——到这里屏幕就活了。
 
 日常使用都在托盘图标上：**左键**打开设备画面的实时镜像（底部有屏幕亮度滑条），**右键**是完整菜单（额度详情、屏幕切换、更换桌宠、音乐/网速页等）。
-
-### Windows 客户端截图
-
-Windows 客户端在检测到 SD2 后会优先显示 USB 串口连接、COM 端口和固件版本；USB 断开后自动回退局域网。
-
-<p align="center">
-  <img src="docs/screenshots/windows-client-usb-priority.png" width="600" alt="Windows 客户端 USB 有线优先托盘菜单">
-</p>
 ## 常见问题
 
 - **屏幕边框红色闪烁**：设备连不上桥接程序——确认电脑端程序在运行、和设备在同一 WiFi。
@@ -96,6 +92,7 @@ Windows 客户端在检测到 SD2 后会优先显示 USB 串口连接、COM 端�
 firmware/     ESP8266 固件（PlatformIO + Arduino，含板上 GIF 解码）
 mac-app/      macOS 菜单栏桥接（Swift/SPM，零第三方依赖）
 windows-app/  Windows 托盘桥接（C# / .NET 8 WinForms）
+linux-app/    Linux 桥接与网页控制台（ASP.NET Core / Docker）
 tools/        GIF → RGB565 内置精灵图转换脚本
 docs/         开发文档（硬件引脚、HTTP API、架构细节）
 ```

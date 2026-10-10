@@ -4,6 +4,7 @@ using System.Text.Json;
 using AIClockBridge.Linux;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
+using Microsoft.Extensions.Logging.Abstractions;
 
 // Dependency-free integration runner. All credentials, HTTP responses and
 // app-server messages are synthetic; tests never contact account APIs.
@@ -28,13 +29,44 @@ if (args.FirstOrDefault() == "app-server")
             { refreshed = true; File.AppendAllText(calls, "refreshed\n"); }
             result = new { account = new { type = "chatgpt" } };
         }
+        if (method == "model/list")
+        {
+            if (scenario == "message-model-error") error = new { code = -1, message = "secret-must-not-leak" };
+            else result = new { data = new[] { new { id = "picker-id", model = "test-model", displayName = "Test Model", isDefault = true, inputModalities = new[] { "text" } } }, nextCursor = (string?)null };
+        }
         if (method == "account/rateLimits/read")
         {
             if (scenario == "error") error = new { code = -1, message = "secret-must-not-leak" };
-            else if (!refreshed) error = new { code = -1, message = "401 unauthorized secret-must-not-leak" };
+            else if (scenario == "message-quota-error") error = new { code = -1, message = "secret-must-not-leak" };
+            else if (!refreshed && !scenario.StartsWith("message")) error = new { code = -1, message = "401 unauthorized secret-must-not-leak" };
             else result = new { rateLimits = new { primary = new { usedPercent = 27, windowDurationMins = 300, resetsAt = DateTimeOffset.UtcNow.AddHours(3).ToUnixTimeSeconds() } } };
         }
-        if (method is "thread/start" or "turn/start") Environment.Exit(11);
+        if (method is "thread/start" or "turn/start")
+        {
+            if (!scenario.StartsWith("message")) Environment.Exit(11);
+            var parameters = root.GetProperty("params");
+            if (method == "thread/start")
+            {
+                if (!parameters.GetProperty("ephemeral").GetBoolean() || parameters.GetProperty("sandbox").GetString() != "read-only"
+                    || parameters.GetProperty("model").GetString() != "test-model" || parameters.GetProperty("cwd").GetString() == home) Environment.Exit(12);
+                result = new { thread = new { id = "test-thread" } };
+            }
+            else
+            {
+                if (parameters.GetProperty("input")[0].GetProperty("text").GetString() != "只回复 OK。") Environment.Exit(13);
+                if (scenario == "message-tool")
+                    Console.WriteLine("{\"id\":100,\"method\":\"item/commandExecution/requestApproval\",\"params\":{}}");
+                if (scenario == "message-slow") await Task.Delay(200);
+                // Complete before the turn/start acknowledgement, with unrelated
+                // notifications mixed in, to test the streaming race.
+                Console.WriteLine(JsonSerializer.Serialize(new { method = "item/completed", @params = new { threadId = "other-thread", turnId = "other-turn", item = new { type = "agentMessage", id = "other", text = "WRONG" } } }));
+                var item = new { type = "agentMessage", id = "reply", phase = "final_answer", text = "OK <b>literal</b>" };
+                Console.WriteLine(JsonSerializer.Serialize(new { method = "item/completed", @params = new { threadId = "test-thread", turnId = "test-turn", item } }));
+                Console.WriteLine(JsonSerializer.Serialize(new { method = "turn/completed", @params = new { threadId = "test-thread", turn = new
+                { id = "test-turn", status = scenario == "message-failed" ? "failed" : "completed", items = new[] { item }, error = scenario == "message-failed" ? new { message = "429 usage limit secret-must-not-leak" } : null } } }));
+                result = new { turn = new { id = "test-turn", status = "inProgress" } };
+            }
+        }
         Console.WriteLine("{\"method\":\"account/updated\",\"params\":{}}");
         Console.WriteLine(error == null ? JsonSerializer.Serialize(new { id = id.GetInt32(), result }) : JsonSerializer.Serialize(new { id = id.GetInt32(), error }));
     }
@@ -160,6 +192,99 @@ Add("RPC errors are sanitized and early exit is handled", async () =>
     Environment.SetEnvironmentVariable("AICLOCK_FAKE_RPC", "exit");
     await ExpectError(async () => await new CodexRpc(s.CodexExecutable).Fetch(s.Current.CodexHome, default), "提前退出");
 });
+Add("Message model discovery and streaming completion preserve reply and quota", async () =>
+{
+    var s = Store("message-rpc"); Environment.SetEnvironmentVariable("AICLOCK_FAKE_RPC", "message");
+    var rpc = new CodexRpc(s.CodexExecutable);
+    var models = await rpc.Models(s.Current.CodexHome, default);
+    Check(models.Single().Id == "test-model" && models[0].IsDefault, "Wrong model id");
+    var result = await rpc.Send(s.Current.CodexHome, Path.Combine(s.DataDirectory, "work"), "test-model", "只回复 OK。", default);
+    Check(result.Reply == "OK <b>literal</b>" && result.Primary?.UsedPercent == 27 && result.QuotaError == null, "Missing or duplicate reply/quota");
+    var calls = File.ReadAllLines(Path.Combine(s.Current.CodexHome, "rpc-calls.txt"));
+    Check(calls.Count(c => c == "turn/start") == 1, "Duplicate generation");
+});
+Add("Unavailable models fail before starting a paid turn", async () =>
+{
+    var s = Store("message-unavailable"); Environment.SetEnvironmentVariable("AICLOCK_FAKE_RPC", "message");
+    await ExpectError(async () => await new CodexRpc(s.CodexExecutable).Send(s.Current.CodexHome, Path.Combine(s.DataDirectory, "work"), "unavailable", "只回复 OK。", default), "模型列表");
+    Check(!File.ReadAllText(Path.Combine(s.Current.CodexHome, "rpc-calls.txt")).Contains("thread/start"), "Started unavailable model");
+});
+Add("Completed reply survives quota failure and model errors stay sanitized", async () =>
+{
+    var s = Store("message-failures"); var rpc = new CodexRpc(s.CodexExecutable);
+    Environment.SetEnvironmentVariable("AICLOCK_FAKE_RPC", "message-quota-error");
+    var result = await rpc.Send(s.Current.CodexHome, Path.Combine(s.DataDirectory, "work"), "test-model", "只回复 OK。", default);
+    Check(result.Reply.StartsWith("OK") && result.QuotaError != null && result.Primary == null, "Lost successful reply");
+    Environment.SetEnvironmentVariable("AICLOCK_FAKE_RPC", "message-failed");
+    await ExpectError(async () => await rpc.Send(s.Current.CodexHome, Path.Combine(s.DataDirectory, "work"), "test-model", "只回复 OK。", default), "额度不足");
+    Environment.SetEnvironmentVariable("AICLOCK_FAKE_RPC", "message-tool");
+    await ExpectError(async () => await rpc.Send(s.Current.CodexHome, Path.Combine(s.DataDirectory, "work"), "test-model", "只回复 OK。", default), "工具或人工");
+});
+Add("Daily schedule handles midnight, grace period and once per day", () =>
+{
+    var now = new DateTimeOffset(2026, 10, 10, 8, 0, 10, TimeSpan.FromHours(8));
+    Check(MessageScheduleService.IsDue(now, "08:00", null), "Missed scheduled time");
+    Check(!MessageScheduleService.IsDue(now.AddMinutes(-1), "08:00", null), "Sent early");
+    Check(!MessageScheduleService.IsDue(now.AddMinutes(5), "08:00", null), "Caught up missed schedule");
+    Check(!MessageScheduleService.IsDue(now, "08:00", "2026-10-10"), "Duplicate daily send");
+    Check(MessageScheduleService.IsDue(now.Date.AddDays(1).AddSeconds(15), "00:00", "2026-10-10"), "Midnight/new day failed");
+    return Task.CompletedTask;
+});
+Add("Schedule settings persist and reject readonly/invalid configuration", async () =>
+{
+    var s = Store("message-settings"); var plan = new MessageSchedule { Enabled = true, Model = "test-model", Time = "08:30" };
+    await ExpectError(() => { s.Save(s.Current with { MessageSchedule = plan }); return Task.CompletedTask; }, "自动续期");
+    s.Save(s.Current with { CodexMode = "managed", MessageSchedule = plan });
+    Check(new SettingsStore().Current.MessageSchedule == plan, "Schedule not persisted");
+    await ExpectError(() => { s.Save(s.Current with { MessageSchedule = plan with { Time = "25:00" } }); return Task.CompletedTask; }, "发送时间");
+    await ExpectError(() => { s.Save(s.Current with { MessageSchedule = plan with { Message = "" } }); return Task.CompletedTask; }, "简单消息");
+    await ExpectError(() => { s.Save(s.Current with { MessageSchedule = plan with { Model = "" } }); return Task.CompletedTask; }, "选择");
+});
+Add("Scheduled results survive restart, update quota and never send twice", async () =>
+{
+    var s = Store("message-schedule"); Environment.SetEnvironmentVariable("AICLOCK_FAKE_RPC", "message");
+    var clock = new TestClock(new DateTimeOffset(2026, 10, 10, 8, 0, 10, TimeSpan.Zero));
+    s.Save(s.Current with { CodexMode = "managed", MessageSchedule = new() { Enabled = true, Model = "test-model" } });
+    using var quota = new QuotaService(s, new HttpClient(new FakeHttp((_, _) => throw new Exception("Unexpected HTTP"))));
+    using var service = new MessageScheduleService(s, quota, NullLogger<MessageScheduleService>.Instance, clock);
+    var run = await service.Run(true, default);
+    Check(run?.Status == "succeeded" && run.Reply == "OK <b>literal</b>" && quota.Snapshot()["codex"].Primary?.UsedPercent == 27, "No persisted result/updated quota");
+    Check(await service.Run(true, default) == null, "Repeated scheduled send");
+    await ExpectError(async () => await service.Run(false, default), "60 秒");
+    using var restart = new MessageScheduleService(s, quota, NullLogger<MessageScheduleService>.Instance, clock);
+    Check(await restart.Run(true, default) == null, "Repeated scheduled send after restart");
+    var persisted = File.ReadAllText(Path.Combine(s.DataDirectory, "message-history.json"));
+    Check(persisted.Contains("succeeded") && !persisted.Contains("fake-access"), "Missing record or leaked credentials");
+    var calls = File.ReadAllLines(Path.Combine(s.Current.CodexHome, "rpc-calls.txt"));
+    Check(calls.Count(c => c == "turn/start") == 1, "More than one paid task");
+});
+Add("Failed scheduled turns and interrupted records never auto-retry", async () =>
+{
+    var s = Store("message-interrupted"); Environment.SetEnvironmentVariable("AICLOCK_FAKE_RPC", "message-failed");
+    var clock = new TestClock(new DateTimeOffset(2026, 10, 10, 8, 0, 10, TimeSpan.Zero));
+    s.Save(s.Current with { CodexMode = "managed", MessageSchedule = new() { Enabled = true, Model = "test-model" } });
+    using var quota = new QuotaService(s, new HttpClient(new FakeHttp((_, _) => throw new Exception("Unexpected HTTP"))));
+    using (var service = new MessageScheduleService(s, quota, NullLogger<MessageScheduleService>.Instance, clock))
+    {
+        Check((await service.Run(true, default))?.Status == "failed", "Failure not recorded");
+        Check(await service.Run(true, default) == null, "Retried failed paid task");
+    }
+    var path = Path.Combine(s.DataDirectory, "message-history.json");
+    SettingsStore.AtomicWrite(path, new MessageHistory { LastScheduledDate = "2026-10-10", Runs = [new() { StartedAt = clock.GetUtcNow(), Model = "test-model" }] });
+    using var restart = new MessageScheduleService(s, quota, NullLogger<MessageScheduleService>.Instance, clock);
+    Check(await restart.Run(true, default) == null, "Retried interrupted task");
+    Check(File.ReadAllText(path).Contains("interrupted"), "Restart did not mark unknown result");
+});
+Add("Manual send and quota polling serialize managed CLI sessions", async () =>
+{
+    var s = Store("message-concurrent"); Environment.SetEnvironmentVariable("AICLOCK_FAKE_RPC", "message-slow");
+    var rpc = new CodexRpc(s.CodexExecutable);
+    var send = rpc.Send(s.Current.CodexHome, Path.Combine(s.DataDirectory, "work"), "test-model", "只回复 OK。", default);
+    var poll = new CodexRpc(s.CodexExecutable).Fetch(s.Current.CodexHome, default);
+    await Task.WhenAll(send, poll);
+    var calls = File.ReadAllLines(Path.Combine(s.Current.CodexHome, "rpc-calls.txt"));
+    Check(calls.Count(c => c == "initialize") == 2 && Array.LastIndexOf(calls, "initialize") > Array.IndexOf(calls, "turn/start"), "Overlapping managed sessions");
+});
 Add("GIF conversion preserves slot dimensions, frames and timing", () =>
 {
     using var sheet = new Image<Rgba32>(1536, 1872, new Rgba32(200, 100, 50));
@@ -201,4 +326,10 @@ sealed class FakeHttp(Func<HttpRequestMessage, CancellationToken, Task<HttpRespo
     public int Count;
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) { Interlocked.Increment(ref Count); return callback(request, ct); }
     public static HttpResponseMessage Response(int status, string body) => new((HttpStatusCode)status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+}
+
+sealed class TestClock(DateTimeOffset now) : TimeProvider
+{
+    public override DateTimeOffset GetUtcNow() => now;
+    public override TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
 }

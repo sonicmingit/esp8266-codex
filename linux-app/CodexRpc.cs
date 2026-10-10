@@ -1,104 +1,230 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 
 namespace AIClockBridge.Linux;
 
-// Short-lived stdio sessions reload credentials on every poll. No thread/start
-// or turn/start calls are made, so this helper never submits a model task.
+// All sessions for one managed home share this lock, including quota polling.
 public sealed class CodexRpc(string executable)
 {
-    public async Task<(QuotaWindow? Primary, QuotaWindow? Weekly)> Fetch(string codexHome, CancellationToken ct)
-    {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(TimeSpan.FromSeconds(45));
-        ct = timeout.Token;
-        Directory.CreateDirectory(codexHome);
-        // Fail early if this directory cannot persist refreshed credentials.
-        var probe = Path.Combine(codexHome, ".aiclock-write-" + Guid.NewGuid().ToString("N"));
-        try { await File.WriteAllTextAsync(probe, "", ct); File.Delete(probe); }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-        { throw new BridgeException("自动续期模式需要独立且可写的 Codex 目录。"); }
+    static readonly ConcurrentDictionary<string, SemaphoreSlim> homes = new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
-        var start = new ProcessStartInfo(executable)
+    public Task<(QuotaWindow? Primary, QuotaWindow? Weekly)> Fetch(string home, CancellationToken ct) =>
+        WithSession(home, null, TimeSpan.FromSeconds(45), async session =>
         {
-            UseShellExecute = false, CreateNoWindow = true,
-            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
-            WorkingDirectory = codexHome
-        };
-        start.ArgumentList.Add("app-server");
-        start.ArgumentList.Add("-c");
-        start.ArgumentList.Add("cli_auth_credentials_store=\"file\"");
-        start.Environment["CODEX_HOME"] = codexHome;
-        // Do not let an inherited API key or external-token mode override managed login.
-        start.Environment.Remove("OPENAI_API_KEY");
-        start.Environment.Remove("CODEX_ACCESS_TOKEN");
-        using var process = new Process { StartInfo = start };
-        var started = false;
-        try
-        {
-            try { started = process.Start(); if (!started) throw new InvalidOperationException(); }
-            catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
-            { throw new BridgeException("无法启动 Codex CLI。请安装 codex 或配置 AICLOCK_CODEX_EXECUTABLE。", 502); }
-            // Drain stderr without returning or logging potentially sensitive CLI output.
-            var stderr = Drain(process.StandardError, ct);
-            var id = 0;
-            async Task<JsonElement> Call(string method, object parameters)
-            {
-                var requestId = ++id;
-                await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(new { id = requestId, method, @params = parameters }).AsMemory(), ct);
-                await process.StandardInput.FlushAsync(ct);
-                while (true)
-                {
-                    var line = await process.StandardOutput.ReadLineAsync(ct);
-                    if (line == null) throw new BridgeException("Codex App Server 提前退出，请检查 CLI 版本与登录状态。", 502);
-                    if (line.Length > 2_000_000) throw new BridgeException("Codex App Server 响应过大。", 502);
-                    JsonDocument message;
-                    try { message = JsonDocument.Parse(line); } catch (JsonException) { continue; }
-                    using (message)
-                    {
-                        var root = message.RootElement;
-                        if (!root.TryGetProperty("id", out var replyId) || !replyId.TryGetInt32(out var rid) || rid != requestId) continue;
-                        if (root.TryGetProperty("error", out var error))
-                        {
-                            var text = JsonValues.String(error, "message") ?? "";
-                            // Classify but never echo arbitrary server messages containing tokens.
-                            var auth = new[] { "401", "unauthorized", "authentication", "access token", "refresh token", "not logged", "not authenticated", "sign in" }
-                                .Any(word => text.Contains(word, StringComparison.OrdinalIgnoreCase));
-                            var limited = text.Contains("429", StringComparison.OrdinalIgnoreCase) || text.Contains("rate limit", StringComparison.OrdinalIgnoreCase);
-                            throw new BridgeException(auth ? "Codex 登录凭据失效，请重新登录。" : limited ? "Codex 请求限流，稍后重试。" : "Codex 账户接口请求失败，请检查网络、账号与 CLI 版本。", auth ? 401 : limited ? 429 : 502);
-                        }
-                        if (root.TryGetProperty("result", out var result)) return result.Clone();
-                        throw new BridgeException("Codex App Server 响应格式错误。", 502);
-                    }
-                }
-            }
-            await Call("initialize", new { clientInfo = new { name = "aiclock_linux", title = "AIClock Linux Bridge", version = "0.1.0" } });
-            await process.StandardInput.WriteLineAsync("{\"method\":\"initialized\",\"params\":{}}".AsMemory(), ct);
-            await process.StandardInput.FlushAsync(ct);
-            var account = await Call("account/read", new { refreshToken = false });
-            var details = JsonValues.Object(account, "account");
-            if (!details.HasValue || JsonValues.String(details.Value, "type") != "chatgpt")
-                throw new BridgeException("自动续期模式需要 ChatGPT 登录，请在此服务的 Codex 目录中完成登录。");
             JsonElement usage;
-            try { usage = await Call("account/rateLimits/read", new { }); }
+            try { usage = await session.Call("account/rateLimits/read", new { }); }
             catch (BridgeException e) when (e.StatusCode == 401)
             {
-                await Call("account/read", new { refreshToken = true });
-                usage = await Call("account/rateLimits/read", new { });
+                await session.Call("account/read", new { refreshToken = true });
+                usage = await session.Call("account/rateLimits/read", new { });
             }
             return QuotaParser.Codex(usage, rpc: true);
-        }
-        finally
+        }, ct);
+
+    public Task<List<CodexModel>> Models(string home, CancellationToken ct) =>
+        WithSession(home, null, TimeSpan.FromSeconds(45), ReadModels, ct);
+
+    static async Task<List<CodexModel>> ReadModels(Session session)
+    {
+        var models = new List<CodexModel>();
+        string? cursor = null;
+        var cursors = new HashSet<string>();
+        do
         {
-            if (started)
+            var result = await session.Call("model/list", new { limit = 100, includeHidden = false, cursor });
+            if (!result.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+                throw new BridgeException("Codex 模型列表响应格式错误。", 502);
+            foreach (var entry in data.EnumerateArray())
             {
-                try { process.StandardInput.Close(); if (!process.HasExited) process.Kill(entireProcessTree: true); }
-                catch (InvalidOperationException) { }
-                catch (System.ComponentModel.Win32Exception) { }
+                var id = JsonValues.String(entry, "model") ?? JsonValues.String(entry, "id");
+                if (id == null || models.Any(m => m.Id == id)) continue;
+                if (entry.TryGetProperty("inputModalities", out var modalities) && modalities.ValueKind == JsonValueKind.Array
+                    && !modalities.EnumerateArray().Any(v => v.ValueKind == JsonValueKind.String && v.GetString() == "text")) continue;
+                models.Add(new(id, JsonValues.String(entry, "displayName") ?? id,
+                    entry.TryGetProperty("isDefault", out var d) && d.ValueKind == JsonValueKind.True));
+            }
+            cursor = JsonValues.String(result, "nextCursor");
+            if (cursor != null && (!cursors.Add(cursor) || cursors.Count > 20))
+                throw new BridgeException("Codex 模型列表分页异常。", 502);
+        } while (cursor != null);
+        return models;
+    }
+
+    public Task<CodexMessageResult> Send(string home, string workspace, string model, string message, CancellationToken ct) =>
+        WithSession(home, workspace, TimeSpan.FromMinutes(3), async session =>
+        {
+            if (!(await ReadModels(session)).Any(m => m.Id == model))
+                throw new BridgeException("所选模型不在当前 Codex 模型列表中，请重新加载并选择。");
+            var thread = await session.Call("thread/start", new
+            {
+                model, modelProvider = "openai", cwd = workspace, ephemeral = true,
+                approvalPolicy = "never", sandbox = "read-only",
+                baseInstructions = "You answer a single short message. Reply concisely in plain text. Do not use tools, read files, run commands, browse, or delegate.",
+                developerInstructions = "This is a scheduled subscription message. Only answer the user's message, with no external actions."
+            });
+            var threadId = JsonValues.String(JsonValues.Object(thread, "thread") ?? default, "id")
+                ?? throw new BridgeException("Codex 未返回消息会话标识。", 502);
+            string? turnId = null;
+            JsonElement? completed = null;
+            var replies = new Dictionary<string, string>();
+            session.Notification = notification =>
+            {
+                var parameters = JsonValues.Object(notification, "params");
+                if (parameters == null || JsonValues.String(parameters.Value, "threadId") != threadId) return;
+                var method = JsonValues.String(notification, "method");
+                if (method == "item/completed" && JsonValues.Object(parameters.Value, "item") is { } item)
+                {
+                    if (turnId != null && JsonValues.String(parameters.Value, "turnId") != turnId) return;
+                    AddReply(item, replies);
+                }
+                if (method == "turn/completed" && JsonValues.Object(parameters.Value, "turn") is { } turn
+                    && (turnId == null || JsonValues.String(turn, "id") == turnId)) completed = turn.Clone();
+            };
+            var started = await session.Call("turn/start", new { threadId, model, input = new[] { new { type = "text", text = message } } });
+            var initial = JsonValues.Object(started, "turn") ?? throw new BridgeException("Codex 未返回消息任务。", 502);
+            turnId = JsonValues.String(initial, "id") ?? throw new BridgeException("Codex 未返回消息任务标识。", 502);
+            if (completed != null && JsonValues.String(completed.Value, "id") != turnId) completed = null;
+            if (JsonValues.String(initial, "status") is "completed" or "failed" or "interrupted") completed = initial;
+            while (completed == null) await session.ReadNotification();
+            var final = completed.Value;
+            if (JsonValues.String(final, "status") != "completed")
+                throw SafeError(JsonValues.Object(final, "error"), "Codex 消息未完成，请检查额度、模型权限与登录状态。已停止本次发送。");
+            if (final.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Array)
+                foreach (var item in items.EnumerateArray()) AddReply(item, replies);
+            var reply = string.Join("\n\n", replies.Values).Trim();
+            if (reply.Length == 0) throw new BridgeException("Codex 任务已结束，但没有返回文本回复。", 502);
+            (QuotaWindow? Primary, QuotaWindow? Weekly) windows = default;
+            string? quotaError = null;
+            try { windows = QuotaParser.Codex(await session.Call("account/rateLimits/read", new { }), rpc: true); }
+            catch (Exception e) when (e is BridgeException or OperationCanceledException or IOException or JsonException)
+            { quotaError = "消息已完成，但发送后的额度查询失败；请等待后台刷新。"; }
+            return new CodexMessageResult(reply, windows.Primary, windows.Weekly, quotaError);
+        }, ct);
+
+    static void AddReply(JsonElement item, Dictionary<string, string> replies)
+    {
+        if (JsonValues.String(item, "type") != "agentMessage" || JsonValues.String(item, "phase") == "commentary") return;
+        var text = JsonValues.String(item, "text");
+        if (string.IsNullOrEmpty(text)) return;
+        replies[JsonValues.String(item, "id") ?? "final"] = text;
+        if (replies.Values.Sum(t => t.Length) > 16000)
+            throw new BridgeException("模型回复超过 16000 字符，已停止本次消息。", 502);
+    }
+
+    async Task<T> WithSession<T>(string home, string? workspace, TimeSpan duration, Func<Session, Task<T>> action, CancellationToken ct)
+    {
+        var semaphore = homes.GetOrAdd(Path.TrimEndingDirectorySeparator(Path.GetFullPath(home)), _ => new(1));
+        await semaphore.WaitAsync(ct);
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(duration);
+            Directory.CreateDirectory(home);
+            var probe = Path.Combine(home, ".aiclock-write-" + Guid.NewGuid().ToString("N"));
+            try { await File.WriteAllTextAsync(probe, "", timeout.Token); File.Delete(probe); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            { throw new BridgeException("自动续期模式需要独立且可写的 Codex 目录。"); }
+            if (workspace != null) Directory.CreateDirectory(workspace);
+            var start = new ProcessStartInfo(executable)
+            {
+                UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
+                WorkingDirectory = workspace ?? home
+            };
+            start.ArgumentList.Add("app-server");
+            start.ArgumentList.Add("-c"); start.ArgumentList.Add("cli_auth_credentials_store=\"file\"");
+            if (workspace != null)
+                foreach (var value in new[] { "model_provider=\"openai\"", "features.shell_tool=false", "features.unified_exec=false", "features.apply_patch_freeform=false", "features.multi_agent=false", "web_search=\"disabled\"", "mcp_servers={}", "notify=[]" })
+                { start.ArgumentList.Add("-c"); start.ArgumentList.Add(value); }
+            start.Environment["CODEX_HOME"] = home;
+            start.Environment.Remove("OPENAI_API_KEY"); start.Environment.Remove("CODEX_ACCESS_TOKEN");
+            using var process = new Process { StartInfo = start };
+            var started = false;
+            try
+            {
+                try { started = process.Start(); if (!started) throw new InvalidOperationException(); }
+                catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
+                { throw new BridgeException("无法启动 Codex CLI。请安装 codex 或配置 AICLOCK_CODEX_EXECUTABLE。", 502); }
+                var stderr = Drain(process.StandardError, timeout.Token);
+                var session = new Session(process, timeout.Token);
+                await session.Call("initialize", new { clientInfo = new { name = "aiclock_linux", title = "AIClock Linux Bridge", version = "0.1.0" } });
+                await session.Write(new { method = "initialized", @params = new { } });
+                var account = await session.Call("account/read", new { refreshToken = false });
+                var details = JsonValues.Object(account, "account");
+                if (!details.HasValue || JsonValues.String(details.Value, "type") != "chatgpt")
+                    throw new BridgeException("自动续期模式需要 ChatGPT 登录，请在此服务的 Codex 目录中完成登录。");
+                return await action(session);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            { throw new BridgeException(workspace == null ? "Codex 账户查询超时。" : "消息发送超过 3 分钟，已停止。可能已消耗额度，请查看账户窗口；不会自动重发。", 504); }
+            finally
+            {
+                timeout.Cancel();
+                if (started)
+                {
+                    try { process.StandardInput.Close(); if (!process.HasExited) process.Kill(entireProcessTree: true); await process.WaitForExitAsync(CancellationToken.None); }
+                    catch (InvalidOperationException) { }
+                    catch (System.ComponentModel.Win32Exception) { }
+                }
             }
         }
+        finally { semaphore.Release(); }
+    }
+
+    sealed class Session(Process process, CancellationToken ct)
+    {
+        int id;
+        public Action<JsonElement>? Notification;
+        public async Task Write(object message)
+        {
+            await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(message).AsMemory(), ct);
+            await process.StandardInput.FlushAsync(ct);
+        }
+        async Task<JsonElement> Read()
+        {
+            while (true)
+            {
+                var line = await process.StandardOutput.ReadLineAsync(ct);
+                if (line == null) throw new BridgeException("Codex App Server 提前退出，请检查 CLI 版本与登录状态。", 502);
+                if (line.Length > 2_000_000) throw new BridgeException("Codex App Server 响应过大。", 502);
+                try { using var doc = JsonDocument.Parse(line); return doc.RootElement.Clone(); }
+                catch (JsonException) { }
+            }
+        }
+        void Handle(JsonElement root)
+        {
+            if (root.TryGetProperty("id", out _) && root.TryGetProperty("method", out _))
+                throw new BridgeException("模型请求了工具或人工操作，已停止。本功能仅支持简单文本回复。", 502);
+            Notification?.Invoke(root);
+        }
+        public async Task ReadNotification() => Handle(await Read());
+        public async Task<JsonElement> Call(string method, object parameters)
+        {
+            var requestId = ++id;
+            await Write(new { id = requestId, method, @params = parameters });
+            while (true)
+            {
+                var root = await Read();
+                if (root.TryGetProperty("method", out _)) { Handle(root); continue; }
+                if (!root.TryGetProperty("id", out var replyId) || !replyId.TryGetInt32(out var rid) || rid != requestId) continue;
+                if (JsonValues.Object(root, "error") is { } error) throw SafeError(error, "Codex 账户接口请求失败，请检查网络、账号与 CLI 版本。");
+                if (root.TryGetProperty("result", out var result)) return result;
+                throw new BridgeException("Codex App Server 响应格式错误。", 502);
+            }
+        }
+    }
+
+    static BridgeException SafeError(JsonElement? error, string fallback)
+    {
+        var text = error is { } value ? JsonValues.String(value, "message") ?? "" : "";
+        var auth = new[] { "401", "unauthorized", "authentication", "access token", "refresh token", "not logged", "not authenticated", "sign in" }
+            .Any(word => text.Contains(word, StringComparison.OrdinalIgnoreCase));
+        var limited = text.Contains("429", StringComparison.OrdinalIgnoreCase) || text.Contains("rate limit", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("usage limit", StringComparison.OrdinalIgnoreCase);
+        return new BridgeException(auth ? "Codex 登录凭据失效，请重新登录。" : limited ? "Codex 额度不足或请求限流，请稍后重试。" : fallback, auth ? 401 : limited ? 429 : 502);
     }
 
     static async Task Drain(StreamReader reader, CancellationToken ct)

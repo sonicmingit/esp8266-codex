@@ -188,4 +188,17 @@ public sealed class QuotaService : BackgroundService
                 weekly_window_min = x.Weekly?.WindowMinutes, weekly_reset_min = Remaining(x.Weekly), needs_input = false }
         };
     }
+
+    public void RecordCodexUsage(BridgeSettings config, QuotaWindow? primary, QuotaWindow? weekly)
+    {
+        lock (gate)
+        {
+            if (settings.Current != config) return;
+            var now = DateTimeOffset.UtcNow;
+            identities["codex"] = Credentials.Identity(config, "codex");
+            states["codex"] = new UsageState { Primary = primary, Weekly = weekly, FetchedAt = now,
+                AttemptedAt = now, NextAttemptAt = now.AddSeconds(config.RefreshSeconds), Enabled = true, Stale = false };
+            cooldowns["codex"] = now.AddSeconds(60);
+        }
+    }
 }

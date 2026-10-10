@@ -21,13 +21,28 @@
   <img src="docs/images/hero.jpg" width="640" alt="AI Mac Mini Display">
 </p>
 
-A retro mini-TV with a 240×240 screen that sits on your desk showing **what Claude Code / Codex CLI are doing right now and how much quota you have left**. No API key needed: everything comes from the CLI credentials and session logs already on your machine, served to the device over your LAN by the companion Mac / Windows bridge app.
+A retro mini-TV with a 240×240 screen that sits on your desk showing **what Claude Code / Codex CLI are doing right now and how much quota you have left**. No extra API key is needed: everything comes from CLI credentials and session logs already on your machine, served by the companion Mac / Windows app or Linux Bridge. Linux Bridge adds a web console, multi-device management and scheduled messages.
 
-## Fork and attribution
+## Fork and updates
 
-This repository is a personal fork of [pengchujin/esp8266-ai](https://github.com/pengchujin/esp8266-ai). The original source code, hardware design, product direction and upstream contributions belong to the original author and upstream repository. This fork is maintained by sonicmingit for personal use and does not represent the upstream author.
+This repository is based on the original author's [pengchujin/esp8266-ai](https://github.com/pengchujin/esp8266-ai). The upstream ESP8266 hardware and firmware, Mac / Windows bridge apps, and original pet, music and network-monitor features belong to the original author and upstream contributors. This personal fork is maintained by sonicmingit and does not represent the upstream author. See [NOTICE.md](NOTICE.md) for copyright and license details.
 
-This branch merges selected upstream PR improvements and adds a Windows USB-first serial bridge. It is a self-use update, not a claim of ownership over the upstream project. See [NOTICE.md](NOTICE.md) and the [upgrade notes](docs/PR-UPGRADE-2026-08-11.md).
+This branch incorporates selected upstream fixes and adds personal-use extensions:
+
+- Integrates selected upstream fixes from [PRs #2, #10, #11, #16, #19 and #21](docs/PR-UPGRADE-2026-08-11.md).
+- Adds Windows CH340/CH343 serial detection, `#HELLO` / `#DEVICE` handshake, USB-first connectivity with LAN fallback, and serial updates for quota, status, network speed and display settings.
+- Ships firmware and the Windows app as `0.4.2-sonic`; tray options persist the default display mode and whether USB mode disables device Wi-Fi.
+- Adds Linux Bridge with Docker or native deployment, Codex / Claude quota checks, Petdex uploads, multi-device pairing and connection checks.
+- Linux Bridge supports per-device display, brightness and on/off schedules, plus daily Codex messages, manual sends and recent results.
+
+## Screenshots
+
+| Device in use | Windows bridge app |
+|---|---|
+| <img src="docs/images/working.jpg" width="440" alt="AI Mac mini display in use"> | <img src="docs/screenshots/windows-client-usb-priority.png" width="440" alt="Windows tray menu with USB-first connection"> |
+
+See the [Linux Bridge guide](linux-app/README.md) for deployment and web-console details.
+
 ## Features
 
 | | |
@@ -59,18 +74,12 @@ Download from [Releases](https://github.com/sonicmingit/esp8266-codex/releases/l
 
 - **macOS**: `AIClockBridge-*-macOS.dmg`, drag into Applications (ad-hoc signed; on first launch allow it in "System Settings → Privacy & Security" and grant local-network access)
 - **Windows**: `AIClockBridge-*-Windows-x64.exe`, just double-click
+- **Linux**: follow the [Linux Bridge guide](linux-app/README.md) for Docker or native installation; its web console manages devices, quota sources and scheduled messages
 
-The bridge lives in your menu bar / tray and **auto-discovers and pairs** with the device on the same LAN — at this point the screen comes alive.
-
-<p align="center">
-  <img src="docs/images/working.jpg" width="640" alt="In action">
-</p>
+The Mac / Windows bridge lives in your menu bar / tray. Windows prefers the USB serial link and falls back to the LAN; Linux Bridge pairs devices through its web console. At this point the screen comes alive.
 
 Daily use is all on the tray icon: **left-click** opens a live mirror of the device screen (with a brightness slider at the bottom), **right-click** opens the full menu (quota details, screen switching, pet swapping, music/network pages, and more).
 
-<p align="center">
-  <img src="docs/screenshots/windows-client-usb-priority.png" width="600" alt="Windows client USB-first tray menu">
-</p>
 ## FAQ
 
 - **Screen border flashing red**: the device can't reach the bridge — make sure the app is running and on the same WiFi.
@@ -83,6 +92,7 @@ Daily use is all on the tray icon: **left-click** opens a live mirror of the dev
 firmware/     ESP8266 firmware (PlatformIO + Arduino, with on-board GIF decoding)
 mac-app/      macOS menu bar bridge (Swift/SPM, zero third-party dependencies)
 windows-app/  Windows tray bridge (C# / .NET 8 WinForms)
+linux-app/    Linux bridge and web console (ASP.NET Core / Docker)
 tools/        GIF → RGB565 built-in sprite conversion script
 docs/         Developer docs (pinout, HTTP API, architecture details)
 ```

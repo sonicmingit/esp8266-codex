@@ -66,6 +66,9 @@ public sealed class SettingsStore
         if (s.Port is < 1 or > 65535) throw new BridgeException("端口必须是 1～65535。");
         if (s.RefreshSeconds is < 60 or > 86400) throw new BridgeException("刷新间隔必须在 1～1440 分钟之间。");
         if (s.CodexMode is not ("readonly" or "managed")) throw new BridgeException("Codex 模式必须是 readonly 或 managed。");
+        ValidateMessageSchedule(s.MessageSchedule);
+        if (s.MessageSchedule.Enabled && (!s.CodexEnabled || s.CodexMode != "managed"))
+            throw new BridgeException("定时消息需要启用 Codex，并选择自动续期模式的独立可写目录。");
         if (s.Devices.Count > 16) throw new BridgeException("最多可以添加 16 个小屏幕。");
         var ids = new HashSet<string>(StringComparer.Ordinal);
         var hosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -104,5 +107,18 @@ public sealed class SettingsStore
             || uri.Port is < 1 or > 65535)
             throw new BridgeException("地址请填写 IP 或主机名及可选端口，例如 192.168.1.20:8765，不带 http:// 或路径。");
         return uri;
+    }
+
+    public static void ValidateMessageSchedule(MessageSchedule? schedule, bool requireModel = false)
+    {
+        if (schedule == null) throw new BridgeException("定时消息设置不能为 null。");
+        if (!TimeOnly.TryParseExact(schedule.Time, "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
+            throw new BridgeException("发送时间请使用 24 小时制，例如 08:00。");
+        if (schedule.Model == null || schedule.Model.Length > 150 || schedule.Model.Any(c => char.IsWhiteSpace(c) || char.IsControl(c)))
+            throw new BridgeException("模型名称无效。");
+        if ((schedule.Enabled || requireModel) && string.IsNullOrWhiteSpace(schedule.Model))
+            throw new BridgeException("请先加载并选择 Codex 模型。");
+        if (string.IsNullOrWhiteSpace(schedule.Message) || schedule.Message.Length > 1000)
+            throw new BridgeException("简单消息不能为空，且最多 1000 个字符。");
     }
 }

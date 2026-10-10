@@ -15,7 +15,39 @@ public sealed record BridgeSettings
     public string CodexHome { get; init; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex");
     public string ClaudeHome { get; init; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude");
     public int RefreshSeconds { get; init; } = 120;
+    public MessageSchedule MessageSchedule { get; init; } = new();
 }
+
+public sealed record MessageSchedule
+{
+    public bool Enabled { get; init; }
+    public string Time { get; init; } = "08:00";
+    public string Model { get; init; } = "";
+    public string Message { get; init; } = "只回复 OK。";
+}
+
+public sealed record CodexModel(string Id, string Name, bool IsDefault);
+public sealed record MessageRun
+{
+    public string Id { get; init; } = Guid.NewGuid().ToString("N");
+    public string Source { get; init; } = "scheduled";
+    public string Model { get; init; } = "";
+    public string Message { get; init; } = "";
+    public string Status { get; init; } = "running";
+    public DateTimeOffset StartedAt { get; init; }
+    public DateTimeOffset? FinishedAt { get; init; }
+    public string? Reply { get; init; }
+    public string? Error { get; init; }
+    public QuotaWindow? Primary { get; init; }
+    public QuotaWindow? Weekly { get; init; }
+    public string? QuotaError { get; init; }
+}
+public sealed record MessageHistory
+{
+    public string? LastScheduledDate { get; init; }
+    public List<MessageRun> Runs { get; init; } = [];
+}
+public sealed record CodexMessageResult(string Reply, QuotaWindow? Primary, QuotaWindow? Weekly, string? QuotaError);
 
 public sealed record DeviceEntry(string Id, string Name, string Host)
 {

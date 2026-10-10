@@ -14,7 +14,7 @@
     </header>
     <nav class="navigation" aria-label="主导航">
       <button class="active" data-view="overview" aria-current="page">额度概览</button>
-      <button data-view="pets">选择宠物</button><button data-view="settings">基础设置</button>
+      <button data-view="messages">定时消息</button><button data-view="pets">选择宠物</button><button data-view="settings">基础设置</button>
       <span class="edition">LINUX BRIDGE / 01</span>
     </nav>
     <main>
@@ -22,6 +22,28 @@
         <div class="section-title"><div><p class="eyebrow">留一点余量，继续创造</p><h1>下一次灵感，还有多少空间。</h1><p class="subtle">账户额度会在后台定时查询，小屏幕与这里共享同一份数据。</p></div><button id="refresh" class="button primary">刷新额度 <span aria-hidden="true">↻</span></button></div>
         <div class="quota-grid" id="quota-cards" aria-live="polite" aria-busy="true"><article class="quota-card"><h2>Codex</h2><p class="subtle">正在获取额度…</p></article><article class="quota-card"><h2>Claude</h2><p class="subtle">正在获取额度…</p></article></div>
         <aside class="overview-note"><span class="note-symbol" aria-hidden="true">i</span><div><strong>Codex 没有运行，也能查额度。</strong><p>服务独立查询账户额度。只读模式使用已有登录凭据；自动续期模式由 Codex 管理登录状态。</p></div><button class="text-button" data-view="settings">配置数据来源 →</button></aside>
+      </section>
+      <section id="messages" class="view" hidden>
+        <div class="section-title"><div><p class="eyebrow">安排一次简单的对话</p><h1>到点发送，留下回复。</h1><p class="subtle">使用 Codex 订阅账号发送消息，并查询发送后的额度窗口。</p></div><span class="badge" id="message-plan-status">正在加载</span></div>
+        <aside class="overview-note"><span class="note-symbol" aria-hidden="true">i</span><div><strong>一次真实请求会消耗少量订阅额度。</strong><p>是否开始新的 5 小时窗口，以服务端返回的时间为准。已有窗口仍按原定时间重置。</p></div></aside>
+        <div class="message-layout">
+          <form id="message-form" class="panel message-editor">
+            <div class="panel-title"><span class="section-number">01</span><h2>发送计划</h2></div>
+            <label class="checkbox-label"><input id="message-enabled" type="checkbox">每天定时发送一条消息</label>
+            <label>每日发送时间<input id="message-time" type="time" value="08:00" required><small id="message-timezone">按服务时区执行</small></label>
+            <label>模型<select id="message-model"><option value="">请加载账号可用模型</option></select></label>
+            <button id="message-models" class="button" type="button">加载可用模型</button>
+            <p id="message-model-error" class="hint" role="status"></p>
+            <label>简单消息<textarea id="message-text" rows="3" maxlength="1000" required>只回复 OK。</textarea><small>最多 1000 字符。每次创建独立会话，不携带之前的对话。</small></label>
+            <p id="message-mode-hint" class="hint"></p>
+            <p id="message-next" class="message-next">定时发送未开启</p>
+            <div class="message-actions"><button id="message-save" class="button primary" type="submit">保存计划</button><button id="message-send" class="button" type="button" disabled>立即发送已保存消息</button></div>
+            <p class="hint">每天最多自动发送一次。失败不自动重发；服务停机超过计划时间 5 分钟后，跳过当天发送。立即发送至少间隔 60 秒。</p>
+          </form>
+          <section class="panel message-results"><div class="panel-title"><span class="section-number">02</span><h2>最近结果</h2><span class="subtle">保留 20 条</span></div>
+            <div id="message-runs" aria-live="polite"><p class="subtle">正在加载发送记录…</p></div>
+          </section>
+        </div>
       </section>
       <section id="pets" class="view" hidden>
         <div class="section-title"><div><p class="eyebrow">给桌上添一点个性</p><h1>为小屏幕挑一位伙伴。</h1><p class="subtle">来自 petdex 的宠物与动画，预览确认后直接上传到设备。<a class="inline-link" href="https://petdex.dev/zh" target="_blank" rel="noopener noreferrer">访问 Petdex 中文站 ↗</a></p></div></div>
@@ -60,15 +82,21 @@
           </div>
           <div class="save-row"><p>路径填写服务所在环境中的绝对路径。凭据不会显示在网页上。</p><button class="button primary" id="save-settings" type="submit">保存设置</button></div>
         </form>
-        <section class="panel device-manager"><div class="panel-title"><span class="section-number">03</span><h2>小屏幕列表</h2><span class="subtle">最多 16 台</span></div>
+        <section class="panel device-manager"><div class="panel-title"><span class="section-number">03</span><h2>小屏幕配对与连接</h2><span class="subtle">最多 16 台</span></div>
           <form id="device-add-form" class="device-add-form"><label>设备名称<input id="new-device-name" placeholder="例如：书桌屏幕" maxlength="50" required></label><label>小屏幕 IP 地址<input id="new-device-host" placeholder="192.168.1.50" autocomplete="off" required></label><button class="button primary" id="add-device" type="submit">添加设备</button></form>
-          <p class="hint">设备需与服务在同一局域网。每台屏幕可单独测试与配对，宠物上传和显示设置可指定目标。</p>
+          <p class="hint">设备需与服务在同一局域网。这里管理设备地址、测试连接并将设备配对到本服务；显示和亮度设置统一放在下方。</p>
           <div id="device-list" class="device-list" aria-live="polite"></div>
         </section>
-        <section class="panel device-controls"><div class="panel-title"><span class="section-number">04</span><h2>小屏幕控制</h2><label class="target-label">控制目标<select id="device-target"><option value="">请先添加设备</option></select></label></div>
-          <div class="control-row"><button id="device-pair" class="button">将设备指向本服务</button><label>显示模式<select id="display-mode"><option value="auto">自动轮换</option><option value="codex">固定 Codex</option><option value="claude">固定 Claude</option><option value="dual">双栏额度</option></select></label><button id="set-display" class="button">应用模式</button></div>
-          <div class="brightness-row"><label for="brightness">屏幕亮度</label><input id="brightness" type="range" min="0" max="100" value="70"><output id="brightness-value" for="brightness">70%</output><button id="set-brightness" class="button">应用亮度</button></div>
-          <p class="hint">连接操作使用已保存的设备地址。显示模式、亮度与宠物均保存到设备，重启后保持。</p>
+        <section class="panel device-controls"><div class="panel-title"><span class="section-number">04</span><h2>小屏幕设置</h2><label class="target-label">设置目标<select id="device-target"><option value="">请先添加设备</option></select></label></div>
+          <p id="device-config-empty" class="empty-devices">先在上方添加小屏幕，再选择设备配置显示模式与亮度。</p>
+          <div id="device-setting-list" class="device-setting-list" hidden>
+            <section class="device-setting-row"><div class="device-setting-heading"><strong>显示模式</strong><small>设置屏幕当前显示的额度布局</small></div><div class="device-setting-fields"><label>模式<select id="display-mode"><option value="auto">自动轮换</option><option value="codex">固定 Codex</option><option value="claude">固定 Claude</option><option value="dual">双栏额度</option></select></label><button id="set-display" class="button">应用模式</button></div></section>
+            <section class="device-setting-row"><div class="device-setting-heading"><strong>屏幕亮度</strong><small>设置正常使用时的亮度</small></div><div class="device-setting-fields device-setting-fields--brightness"><label for="brightness">亮度<input id="brightness" type="range" min="0" max="100" value="70"></label><output id="brightness-value" for="brightness">70%</output><button id="set-brightness" class="button">应用亮度</button></div></section>
+            <section class="device-setting-row"><div class="device-setting-heading"><strong>定时页面</strong><small>按服务所在电脑的本地时间执行</small></div><div class="device-setting-fields device-setting-fields--schedule"><label class="checkbox-label"><input id="page-schedule-enabled" type="checkbox">按时间开启</label><label>页面模式<select id="page-mode"><option value="auto">自动轮换</option><option value="codex">固定 Codex</option><option value="claude">固定 Claude</option><option value="dual">双栏额度</option></select></label><label>开启时间<input id="page-on-time" type="time" required></label><label>关闭时间<input id="page-off-time" type="time" required></label></div></section>
+            <section class="device-setting-row"><div class="device-setting-heading"><strong>关闭亮度</strong><small>定时关闭页面时应用</small></div><div class="device-setting-fields device-setting-fields--brightness"><label for="page-off-brightness">亮度<input id="page-off-brightness" type="range" min="0" max="100"></label><output id="page-off-brightness-value" for="page-off-brightness">0%</output></div></section>
+            <section class="device-setting-row"><div class="device-setting-heading"><strong>夜间亮度</strong><small>仅在页面开启期间生效</small></div><div class="device-setting-fields device-setting-fields--night"><label class="checkbox-label"><input id="night-mode-enabled" type="checkbox">启用夜间亮度</label><label>开始时间<input id="night-start" type="time" required></label><label>结束时间<input id="night-end" type="time" required></label><label for="night-brightness">亮度<input id="night-brightness" type="range" min="0" max="100"></label><output id="night-brightness-value" for="night-brightness">0%</output></div></section>
+          </div>
+          <div class="device-settings-actions"><p class="hint">显示模式、亮度和定时设置保存在所选设备，重启后保持。</p><button id="save-device-schedule" class="button primary">保存定时与亮度设置</button></div>
         </section>
       </section>
     </main>

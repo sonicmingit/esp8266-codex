@@ -1,8 +1,9 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const state = { usage: null, settings: null, runtime: null, pets: [], selected: null, page: 0, total: 0, petLoaded: false, deviceTargetId: '', deviceStatuses: {} };
+const state = { usage: null, settings: null, runtime: null, pets: [], selected: null, page: 0, total: 0, petLoaded: false, deviceTargetId: '', deviceStatuses: {}, deviceInfos: {} };
 const escapeHtml = value => { const node = document.createElement('span'); node.textContent = String(value ?? ''); return node.innerHTML; };
 let toastTimer, previewSequence = 0, petSearchSequence = 0, polling = false;
+let messageFormLoaded = false, messagePolling = false, messageSending = false, messagesState = null;
 function toast(message, error = false) { clearTimeout(toastTimer); $('toast').textContent = message; $('toast').className = `toast${error ? ' error' : ''}`; $('toast').hidden = false; toastTimer = setTimeout(() => $('toast').hidden = true, error ? 9000 : 5000); }
 async function api(path, body) {
   const response = await fetch(path, { cache: 'no-store', ...(body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }) });
@@ -17,6 +18,7 @@ function view(name) {
   document.querySelectorAll('.view').forEach(node => node.hidden = node.id !== name);
   document.querySelectorAll('.navigation [data-view]').forEach(node => { node.classList.toggle('active', node.dataset.view === name); if (node.dataset.view === name) node.setAttribute('aria-current', 'page'); else node.removeAttribute('aria-current'); });
   if (name === 'pets' && !state.petLoaded) loadPets(0);
+  if (name === 'messages') loadMessages();
 }
 document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => view(button.dataset.view)));
 function countdown(epoch) {
@@ -61,24 +63,42 @@ function renderDeviceTargets() {
     select.value = state.deviceTargetId;
     select.disabled = devices.length === 0;
   }
-  for (const id of ['device-pair', 'set-display', 'set-brightness', 'pet-reset']) $(id).disabled = devices.length === 0;
+  for (const id of ['pet-reset']) $(id).disabled = devices.length === 0;
   $('pet-apply').disabled = !state.selected || !devices.length || $('pet-preview').hidden;
+  renderDeviceControls();
+}
+function renderDeviceControls() {
+  const device = deviceList().find(entry => entry.id === state.deviceTargetId);
+  const active = Boolean(device);
+  $('device-config-empty').hidden = active;
+  $('device-setting-list').hidden = !active;
+  $('set-display').disabled = !active;
+  $('set-brightness').disabled = !active;
+  $('save-device-schedule').disabled = !active;
+  $('device-setting-list').querySelectorAll('input, select').forEach(field => field.disabled = !active);
+  if (!device) return;
+  const info = state.deviceInfos[device.id];
+  $('display-mode').value = ['auto', 'codex', 'claude', 'dual'].includes(info?.mode) ? info.mode : 'auto';
+  $('brightness').value = info?.brightness ?? device.dayBrightness ?? 100;
+  $('page-schedule-enabled').checked = Boolean(device.pageScheduleEnabled);
+  $('page-mode').value = device.pageMode ?? 'auto';
+  $('page-on-time').value = device.pageOnTime ?? '08:00';
+  $('page-off-time').value = device.pageOffTime ?? '22:00';
+  $('page-off-brightness').value = device.pageOffBrightness ?? 0;
+  $('night-mode-enabled').checked = Boolean(device.nightModeEnabled);
+  $('night-start').value = device.nightStart ?? '22:00';
+  $('night-end').value = device.nightEnd ?? '07:00';
+  $('night-brightness').value = device.nightBrightness ?? 0;
+  for (const [inputId, outputId] of [['brightness', 'brightness-value'], ['page-off-brightness', 'page-off-brightness-value'], ['night-brightness', 'night-brightness-value']]) {
+    $(outputId).value = `${$(inputId).value}%`; $(outputId).textContent = $(outputId).value;
+  }
 }
 function renderDeviceList() {
   const devices = deviceList();
-  if (!devices.length) { $('device-list').innerHTML = '<p class="empty-devices">还没有添加小屏幕。填写设备名称和 IP 后即可连接。</p>'; return; }
+  if (!devices.length) { $('device-list').innerHTML = '<p class="empty-devices">还没有添加小屏幕。填写设备名称和 IP 后即可测试连接并配对。</p>'; return; }
   $('device-list').innerHTML = devices.map((device, index) => `<article class="device-row" data-device-index="${index}">
     <div class="device-row-fields"><label>设备名称<input data-device-field="name" maxlength="50" required></label><label>IP 地址<input data-device-field="host" autocomplete="off" required></label></div>
-    <div class="device-row-actions"><span class="device-status" data-device-status>${escapeHtml(state.deviceStatuses[device.id] ?? '尚未测试连接')}</span><button class="button" data-device-action="test">测试</button><button class="button" data-device-action="pair">配对</button><button class="button" data-device-action="save">保存</button><button class="text-button danger-button" data-device-action="delete">移除</button><a class="button device-page-link" data-device-page target="_blank" rel="noopener noreferrer">打开屏幕页面 ↗</a></div>
-    <details class="device-schedule"><summary>定时页面与夜间亮度</summary><div class="schedule-grid">
-      <label class="checkbox-label"><input type="checkbox" data-schedule="pageScheduleEnabled">按时间开启页面</label>
-      <label>开启时的页面模式<select data-schedule="pageMode"><option value="auto">自动轮换</option><option value="codex">固定 Codex</option><option value="claude">固定 Claude</option><option value="dual">双栏额度</option></select></label>
-      <label>每日开启时间<input type="time" data-schedule="pageOnTime" required></label><label>每日关闭时间<input type="time" data-schedule="pageOffTime" required></label>
-      <label>页面关闭亮度<input type="range" min="0" max="100" data-schedule="pageOffBrightness"><output data-schedule-value="pageOffBrightness"></output></label>
-      <label class="checkbox-label"><input type="checkbox" data-schedule="nightModeEnabled">启用夜间亮度</label>
-      <label>夜间开始<input type="time" data-schedule="nightStart" required></label><label>夜间结束<input type="time" data-schedule="nightEnd" required></label>
-      <label>夜间亮度<input type="range" min="0" max="100" data-schedule="nightBrightness"><output data-schedule-value="nightBrightness"></output></label>
-    </div><p class="hint">按服务所在电脑的本地时间执行。关闭亮度可单独设置；夜间亮度只在页面开启期间应用。</p><button class="button" data-device-action="schedule">保存定时与夜间设置</button></details>
+    <div class="device-row-actions"><span class="device-status" data-device-status>${escapeHtml(state.deviceStatuses[device.id] ?? '尚未测试连接')}</span><button class="button" data-device-action="test">测试连接</button><button class="button" data-device-action="pair">配对</button><button class="button" data-device-action="save">保存信息</button><button class="text-button danger-button" data-device-action="delete">移除</button><a class="button device-page-link" data-device-page target="_blank" rel="noopener noreferrer">打开屏幕页面 ↗</a></div>
   </article>`).join('');
   document.querySelectorAll('.device-row').forEach(row => {
     const device = devices[Number(row.dataset.deviceIndex)];
@@ -86,50 +106,24 @@ function renderDeviceList() {
     row.querySelector('[data-device-field="host"]').value = device.host;
     const pageLink = row.querySelector('[data-device-page]');
     pageLink.href = new URL(`http://${device.host}/`).href;
-    const schedule = {
-      pageScheduleEnabled: device.pageScheduleEnabled, pageMode: device.pageMode, pageOnTime: device.pageOnTime, pageOffTime: device.pageOffTime, pageOffBrightness: device.pageOffBrightness,
-      nightModeEnabled: device.nightModeEnabled, nightStart: device.nightStart, nightEnd: device.nightEnd, nightBrightness: device.nightBrightness
-    };
-    for (const [key, value] of Object.entries(schedule)) {
-      const field = row.querySelector(`[data-schedule="${key}"]`);
-      if (field.type === 'checkbox') field.checked = value;
-      else field.value = value;
-    }
-    for (const key of ['pageOffBrightness', 'nightBrightness']) {
-      const range = row.querySelector(`[data-schedule="${key}"]`);
-      const output = row.querySelector(`[data-schedule-value="${key}"]`);
-      output.value = `${range.value}%`; output.textContent = output.value;
-      range.oninput = () => { output.value = `${range.value}%`; output.textContent = output.value; };
-    }
     const route = action => `/api/devices/${encodeURIComponent(device.id)}/${action}`;
     row.querySelector('[data-device-action="test"]').onclick = buttonEvent => action(buttonEvent.currentTarget, async () => {
       const info = await api(route('info'));
-      state.deviceTargetId = device.id; renderDeviceTargets();
+      state.deviceInfos[device.id] = info; state.deviceTargetId = device.id; renderDeviceTargets();
       const status = `已连接 · ${info.ip || device.host}${info.fw ? ` · ${info.fw}` : ''}`;
-      if (['auto', 'codex', 'claude', 'dual'].includes(info.mode)) $('display-mode').value = info.mode;
       if (Number.isFinite(info.brightness)) {
-        $('brightness').value = info.brightness; $('brightness-value').textContent = `${info.brightness}%`;
         state.settings.devices = state.settings.devices.map(entry => entry.id === device.id ? { ...entry, dayBrightness: info.brightness } : entry);
+        renderDeviceControls();
       }
       state.deviceStatuses[device.id] = status; row.querySelector('[data-device-status]').textContent = status;
     }, '设备连接正常。');
     row.querySelector('[data-device-action="pair"]').onclick = buttonEvent => action(buttonEvent.currentTarget, () => api(route('pair'), {}), `“${device.name}”已指向本服务。`);
     row.querySelector('[data-device-action="save"]').onclick = buttonEvent => action(buttonEvent.currentTarget, async () => {
       await api(route('update'), { name: row.querySelector('[data-device-field="name"]').value.trim(), host: row.querySelector('[data-device-field="host"]').value.trim() });
-      delete state.deviceStatuses[device.id]; await loadSettings();
+      delete state.deviceStatuses[device.id]; delete state.deviceInfos[device.id]; await loadSettings();
     }, '设备信息已保存。');
-    row.querySelector('[data-device-action="schedule"]').onclick = buttonEvent => action(buttonEvent.currentTarget, async () => {
-      const read = key => row.querySelector(`[data-schedule="${key}"]`);
-      await api(route('schedule'), {
-        pageScheduleEnabled: read('pageScheduleEnabled').checked, pageMode: read('pageMode').value,
-        pageOnTime: read('pageOnTime').value, pageOffTime: read('pageOffTime').value, pageOffBrightness: Number(read('pageOffBrightness').value),
-        nightModeEnabled: read('nightModeEnabled').checked, nightStart: read('nightStart').value,
-        nightEnd: read('nightEnd').value, nightBrightness: Number(read('nightBrightness').value)
-      });
-      await loadSettings();
-    }, '定时页面与夜间亮度设置已保存。');
     row.querySelector('[data-device-action="delete"]').onclick = buttonEvent => action(buttonEvent.currentTarget, async () => {
-      await api(route('delete'), {}); delete state.deviceStatuses[device.id]; await loadSettings();
+      await api(route('delete'), {}); delete state.deviceStatuses[device.id]; delete state.deviceInfos[device.id]; await loadSettings();
     }, `“${device.name}”已移除。`);
   });
 }
@@ -146,7 +140,7 @@ async function loadSettings() {
 }
 $('codex-mode').onchange = updateModeHint;
 $('settings-form').onsubmit = event => { event.preventDefault(); action($('save-settings'), async () => {
-  const result = await api('/api/settings', { port: $('port').disabled ? state.settings.port : Number($('port').value), deviceHost: '', devices: state.settings.devices, advertisedHost: $('advertised-host').value.trim(), refreshSeconds: Math.round(Number($('refresh-minutes').value) * 60), codexEnabled: $('codex-enabled').checked, claudeEnabled: $('claude-enabled').checked, codexMode: $('codex-mode').value, codexHome: $('codex-home').value.trim(), claudeHome: $('claude-home').value.trim() });
+  const result = await api('/api/settings', { port: $('port').disabled ? state.settings.port : Number($('port').value), deviceHost: '', devices: state.settings.devices, advertisedHost: $('advertised-host').value.trim(), refreshSeconds: Math.round(Number($('refresh-minutes').value) * 60), codexEnabled: $('codex-enabled').checked, claudeEnabled: $('claude-enabled').checked, codexMode: $('codex-mode').value, codexHome: $('codex-home').value.trim(), claudeHome: $('claude-home').value.trim(), messageSchedule: messagesState?.schedule ?? state.settings.messageSchedule });
   await loadSettings(); await loadUsage(); toast(result.restartRequired ? '设置已保存。监听端口需重启服务后生效，请同步更新设备服务地址。' : '设置已保存，后台将按刷新间隔查询。');
 }); };
 function selectedDeviceId() { if (!state.deviceTargetId) throw new Error('请先添加并选择一台小屏幕。'); return state.deviceTargetId; }
@@ -156,14 +150,30 @@ $('device-add-form').onsubmit = event => { event.preventDefault(); action($('add
 }, '小屏幕已添加。'); };
 $('device-target').onchange = () => { state.deviceTargetId = $('device-target').value; renderDeviceTargets(); };
 $('pet-device').onchange = () => { state.deviceTargetId = $('pet-device').value; renderDeviceTargets(); };
-$('device-pair').onclick = () => action($('device-pair'), () => api(`/api/devices/${encodeURIComponent(selectedDeviceId())}/pair`, {}), '已将所选设备指向本服务。');
-$('set-display').onclick = () => action($('set-display'), () => api(`/api/devices/${encodeURIComponent(selectedDeviceId())}/display`, { mode: $('display-mode').value }), '显示模式已保存到所选设备。');
-$('brightness').oninput = () => $('brightness-value').textContent = `${$('brightness').value}%`;
+$('set-display').onclick = () => action($('set-display'), async () => {
+  const id = selectedDeviceId(), mode = $('display-mode').value;
+  await api(`/api/devices/${encodeURIComponent(id)}/display`, { mode });
+  state.deviceInfos[id] = { ...state.deviceInfos[id], mode };
+}, '显示模式已保存到所选设备。');
+for (const [inputId, outputId] of [['brightness', 'brightness-value'], ['page-off-brightness', 'page-off-brightness-value'], ['night-brightness', 'night-brightness-value']]) {
+  $(inputId).oninput = () => { $(outputId).value = `${$(inputId).value}%`; $(outputId).textContent = $(outputId).value; };
+}
 $('set-brightness').onclick = () => action($('set-brightness'), async () => {
   const id = selectedDeviceId(); const level = Number($('brightness').value);
   await api(`/api/devices/${encodeURIComponent(id)}/brightness`, { level });
   state.settings.devices = state.settings.devices.map(device => device.id === id ? { ...device, dayBrightness: level } : device);
+  state.deviceInfos[id] = { ...state.deviceInfos[id], brightness: level };
 }, '常规亮度已保存到所选设备。');
+$('save-device-schedule').onclick = () => action($('save-device-schedule'), async () => {
+  const id = selectedDeviceId();
+  await api(`/api/devices/${encodeURIComponent(id)}/schedule`, {
+    pageScheduleEnabled: $('page-schedule-enabled').checked, pageMode: $('page-mode').value,
+    pageOnTime: $('page-on-time').value, pageOffTime: $('page-off-time').value, pageOffBrightness: Number($('page-off-brightness').value),
+    nightModeEnabled: $('night-mode-enabled').checked, nightStart: $('night-start').value,
+    nightEnd: $('night-end').value, nightBrightness: Number($('night-brightness').value)
+  });
+  await loadSettings();
+}, '定时页面与夜间亮度设置已保存。');
 async function loadPets(page) {
   const sequence = ++petSearchSequence; $('pet-list').innerHTML = '<p class="loading-message">正在加载 petdex 图库…</p>';
   try {
@@ -190,5 +200,56 @@ $('pet-search').onkeydown = event => { if (event.key === 'Enter') { event.preven
 $('pet-prev').onclick = () => loadPets(state.page - 1); $('pet-next').onclick = () => loadPets(state.page + 1);
 $('pet-apply').onclick = () => { if (!state.selected) return; action($('pet-apply'), () => api(`/api/pets/${encodeURIComponent(state.selected.slug)}/apply`, { deviceId: selectedDeviceId(), slot: $('pet-slot').value, animation: $('pet-animation').value }), '宠物已上传并保存到所选小屏幕。'); };
 $('pet-reset').onclick = () => action($('pet-reset'), () => api('/api/pets/reset', { deviceId: selectedDeviceId(), slot: $('pet-slot').value }), '已在所选小屏幕恢复该插槽的默认宠物。');
-Promise.all([loadSettings(), loadUsage()]).catch(error => toast(error.message, true));
+function messageDate(value) { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—'; }
+function renderMessages(data) {
+  messagesState = data;
+  if (state.settings) state.settings.messageSchedule = data.schedule;
+  if (!messageFormLoaded) {
+    $('message-enabled').checked = data.schedule.enabled; $('message-time').value = data.schedule.time;
+    $('message-text').value = data.schedule.message;
+    if (data.schedule.model) $('message-model').replaceChildren(new Option(data.schedule.model, data.schedule.model));
+    messageFormLoaded = true;
+  }
+  $('message-plan-status').textContent = data.running ? '正在发送' : data.schedule.enabled ? '每日发送已开启' : '定时发送未开启';
+  $('message-timezone').textContent = `服务时区：${data.timeZone} · 当前时间 ${data.serverTime.slice(0, 16).replace('T', ' ')}`;
+  $('message-next').textContent = data.nextRunAt ? `下次计划：${data.nextRunAt.slice(0, 16).replace('T', ' ')}（服务时间）` : '定时发送未开启';
+  $('message-mode-hint').textContent = data.canSend ? '已使用 Codex 自动续期模式。发送将使用此服务目录中登录的订阅账号。' : '请在基础设置启用 Codex，选择自动续期模式，并登录独立可写目录；Docker 需要使用 managed 镜像。';
+  $('message-models').disabled = !data.canSend;
+  $('message-send').disabled = messageSending || data.running || !data.canSend || !data.schedule.model;
+  $('message-runs').innerHTML = data.runs.length ? data.runs.map(run => {
+    const status = { running: '发送中', succeeded: '已完成', failed: '失败', interrupted: '已中断' }[run.status] ?? run.status;
+    const window = run.primary?.windowMinutes === 300 ? run.primary : null;
+    return `<article class="message-run ${run.status}"><div class="message-run-head"><strong>${escapeHtml(run.model)}</strong><span class="badge">${escapeHtml(status)}</span></div><p class="subtle">${run.source === 'scheduled' ? '定时发送' : '立即发送'} · ${escapeHtml(messageDate(run.startedAt))}</p><p class="message-prompt">${escapeHtml(run.message)}</p>${run.reply ? `<pre class="message-reply">${escapeHtml(run.reply)}</pre>` : ''}${run.error ? `<p class="quota-error">${escapeHtml(run.error)}</p>` : ''}${run.quotaError ? `<p class="quota-error">${escapeHtml(run.quotaError)}</p>` : ''}${run.status === 'succeeded' && !run.quotaError ? `<p class="message-window">${window ? `发送后 5 小时窗口：已用 ${Number(window.usedPercent).toFixed(1)}% · 重置于 ${escapeHtml(messageDate(window.resetsAt * 1000))}` : '发送后的额度响应未包含 5 小时窗口，等待后续额度查询。'}</p>` : ''}${run.finishedAt ? `<p class="subtle">结束 ${escapeHtml(messageDate(run.finishedAt))}</p>` : '<p class="subtle">等待模型回复，最长 3 分钟…</p>'}</article>`;
+  }).join('') : '<div class="empty-state"><strong>还没有发送记录。</strong><p class="subtle">保存模型与消息后，可立即发送验证回复；也可开启每日定时发送。</p></div>';
+}
+async function loadMessages() {
+  if (messagePolling) return; messagePolling = true;
+  try { renderMessages(await api('/api/messages')); }
+  catch (error) { $('message-plan-status').textContent = '消息服务连接中断'; }
+  finally { messagePolling = false; }
+}
+$('message-models').onclick = () => action($('message-models'), async () => {
+  try {
+    const models = await api('/api/messages/models'); const selected = $('message-model').value;
+    $('message-model').replaceChildren(...models.map(model => new Option(model.name, model.id)));
+    if (models.some(model => model.id === selected)) $('message-model').value = selected;
+    else if (models.some(model => model.isDefault)) $('message-model').value = models.find(model => model.isDefault).id;
+    if (!models.length) $('message-model').replaceChildren(new Option('账号没有返回可用文本模型', ''));
+    $('message-model-error').textContent = models.length ? `已加载 ${models.length} 个模型。选择后保存计划。` : '请检查登录账号与 Codex CLI 版本。';
+  } catch (error) { $('message-model-error').textContent = error.message; throw error; }
+});
+$('message-form').onsubmit = event => { event.preventDefault(); action($('message-save'), async () => {
+  await api('/api/messages/schedule', { enabled: $('message-enabled').checked, time: $('message-time').value, model: $('message-model').value, message: $('message-text').value.trim() });
+  await loadMessages();
+}, '发送计划已保存。'); };
+$('message-send').onclick = () => action($('message-send'), async () => {
+  messageSending = true;
+  try {
+    const run = await api('/api/messages/send', {});
+    if (run?.status !== 'succeeded') throw new Error(run?.error || '发送未完成，请查看最近结果。');
+    toast('消息已完成，回复与发送后的窗口显示在最近结果。');
+  } finally { messageSending = false; await loadMessages(); await loadUsage(); }
+}).finally(() => { if (messagesState) $('message-send').disabled = messagesState.running || !messagesState.canSend || !messagesState.schedule.model; });
+Promise.all([loadSettings(), loadUsage(), loadMessages()]).catch(error => toast(error.message, true));
 setInterval(loadUsage, 5000);
+setInterval(loadMessages, 5000);
