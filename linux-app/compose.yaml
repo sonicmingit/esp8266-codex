@@ -9,6 +9,7 @@ services:
     ports:
       - "${AICLOCK_HOST_PORT:-8765}:8765"
     environment:
+      TZ: Asia/Shanghai
       AICLOCK_DOCKER: "1"
       AICLOCK_PORT: "8765"
       AICLOCK_DATA_DIR: /data
@@ -17,7 +18,6 @@ services:
       AICLOCK_CODEX_MODE: readonly
       AICLOCK_ADVERTISED_HOST: "${AICLOCK_ADVERTISED_HOST:-}"
     volumes:
-      - /etc/localtime:/etc/localtime:ro
       - type: bind
         source: "${AICLOCK_DATA_PATH:-./data}"
         target: /data

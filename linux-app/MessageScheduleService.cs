@@ -42,6 +42,7 @@ public sealed class MessageScheduleService : BackgroundService
             if (now >= due.AddMinutes(5) || history.LastScheduledDate == DateKey(now)) due = DueTime(now.AddDays(1), config.MessageSchedule.Time);
             return new { schedule = config.MessageSchedule, timeZone = clock.LocalTimeZone.Id,
                 serverTime = now, nextRunAt = config.MessageSchedule.Enabled ? (DateTimeOffset?)due : null,
+                codexMode = config.CodexMode, codexEnabled = config.CodexEnabled,
                 canSend = config.CodexEnabled && config.CodexMode == "managed", running = history.Runs.Any(r => r.Status == "running"),
                 runs = history.Runs.ToArray() };
         }

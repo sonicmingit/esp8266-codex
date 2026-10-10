@@ -33,6 +33,7 @@ task_compose=(docker compose -f compose.yaml)
 [[ "$mode" != managed ]] || task_compose+=(-f compose.managed.yaml)
 "${task_compose[@]}" up -d --build
 printf '部署完成。访问 http://本机局域网IP:对外端口/，默认端口 8765。\n'
+printf '容器时区：北京时间 Asia/Shanghai（UTC+8），所有定时任务按北京时间执行。\n'
 if [[ "$mode" == managed ]]; then
   printf '首次自动续期部署：运行 bash codex-login.sh，在浏览器完成独立登录。\n'
   printf '若已有 data/settings.json，请在网页将 Codex 模式改为自动续期，目录改为 /data/codex。\n'

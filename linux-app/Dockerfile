@@ -10,7 +10,7 @@ RUN dotnet publish -c Release -o /out --no-restore /p:UseAppHost=false
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS readonly
 WORKDIR /app
 COPY --from=build /out ./
-ENV AICLOCK_DOCKER=1 AICLOCK_PORT=8765 AICLOCK_DATA_DIR=/data \
+ENV TZ=Asia/Shanghai AICLOCK_DOCKER=1 AICLOCK_PORT=8765 AICLOCK_DATA_DIR=/data \
     AICLOCK_CODEX_HOME=/credentials/codex AICLOCK_CLAUDE_HOME=/credentials/claude \
     AICLOCK_CODEX_MODE=readonly DOTNET_EnableDiagnostics=0
 EXPOSE 8765

@@ -53,6 +53,10 @@ async function loadUsage() {
 }
 $('refresh').onclick = () => action($('refresh'), async () => { state.usage = await api('/api/usage/refresh', {}); renderUsage(); }, '查询完成。频繁点击会沿用缓存，接口限流时自动退避。');
 function updateModeHint() { $('mode-hint').textContent = $('codex-mode').value === 'managed' ? '需要已安装 Codex CLI，以及独立、可写且已登录的服务目录。请勿与正在使用的宿主机凭据共用。登录步骤见中文说明。' : '每次查询重新读取 auth.json。宿主机更新凭据后自动生效；此模式不会写入或续期凭据。'; }
+function renderServiceMode(mode) {
+  $('service-mode').textContent = `Codex 模式 · ${mode}`;
+  $('service-mode').classList.toggle('managed', mode === 'managed');
+}
 function deviceList() { return state.settings?.devices ?? []; }
 function renderDeviceTargets() {
   const devices = deviceList();
@@ -133,6 +137,7 @@ async function loadSettings() {
   $('advertised-host').value = s.advertisedHost; $('port').value = data.runtime.portFromEnvironment || data.runtime.docker ? data.runtime.port : s.port;
   $('refresh-minutes').value = Number((s.refreshSeconds / 60).toFixed(2)); $('codex-enabled').checked = s.codexEnabled; $('claude-enabled').checked = s.claudeEnabled;
   $('codex-home').value = s.codexHome; $('claude-home').value = s.claudeHome; $('codex-mode').value = s.codexMode;
+  renderServiceMode(s.codexMode);
   $('port').disabled = data.runtime.portFromEnvironment || data.runtime.docker;
   $('port-hint').textContent = data.runtime.docker ? `容器内部监听 ${data.runtime.port}。对外端口在 Compose 的 AICLOCK_HOST_PORT 中修改，然后重新创建容器。`
     : data.runtime.portFromEnvironment ? `当前由 AICLOCK_PORT 指定监听 ${data.runtime.port}，环境变量优先于网页设置。` : `当前监听 ${data.runtime.port}。修改端口后重启服务，并同步设备可访问的服务地址。`;
@@ -141,7 +146,7 @@ async function loadSettings() {
 $('codex-mode').onchange = updateModeHint;
 $('settings-form').onsubmit = event => { event.preventDefault(); action($('save-settings'), async () => {
   const result = await api('/api/settings', { port: $('port').disabled ? state.settings.port : Number($('port').value), deviceHost: '', devices: state.settings.devices, advertisedHost: $('advertised-host').value.trim(), refreshSeconds: Math.round(Number($('refresh-minutes').value) * 60), codexEnabled: $('codex-enabled').checked, claudeEnabled: $('claude-enabled').checked, codexMode: $('codex-mode').value, codexHome: $('codex-home').value.trim(), claudeHome: $('claude-home').value.trim(), messageSchedule: messagesState?.schedule ?? state.settings.messageSchedule });
-  await loadSettings(); await loadUsage(); toast(result.restartRequired ? '设置已保存。监听端口需重启服务后生效，请同步更新设备服务地址。' : '设置已保存，后台将按刷新间隔查询。');
+  await loadSettings(); await loadUsage(); await loadMessages(); toast(result.restartRequired ? '设置已保存。监听端口需重启服务后生效，请同步更新设备服务地址。' : '设置已保存，后台将按刷新间隔查询。');
 }); };
 function selectedDeviceId() { if (!state.deviceTargetId) throw new Error('请先添加并选择一台小屏幕。'); return state.deviceTargetId; }
 $('device-add-form').onsubmit = event => { event.preventDefault(); action($('add-device'), async () => {
@@ -203,6 +208,8 @@ $('pet-reset').onclick = () => action($('pet-reset'), () => api('/api/pets/reset
 function messageDate(value) { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—'; }
 function renderMessages(data) {
   messagesState = data;
+  const mode = data.codexMode ?? state.settings?.codexMode;
+  if (mode) renderServiceMode(mode);
   if (state.settings) state.settings.messageSchedule = data.schedule;
   if (!messageFormLoaded) {
     $('message-enabled').checked = data.schedule.enabled; $('message-time').value = data.schedule.time;
@@ -213,7 +220,14 @@ function renderMessages(data) {
   $('message-plan-status').textContent = data.running ? '正在发送' : data.schedule.enabled ? '每日发送已开启' : '定时发送未开启';
   $('message-timezone').textContent = `服务时区：${data.timeZone} · 当前时间 ${data.serverTime.slice(0, 16).replace('T', ' ')}`;
   $('message-next').textContent = data.nextRunAt ? `下次计划：${data.nextRunAt.slice(0, 16).replace('T', ' ')}（服务时间）` : '定时发送未开启';
-  $('message-mode-hint').textContent = data.canSend ? '已使用 Codex 自动续期模式。发送将使用此服务目录中登录的订阅账号。' : '请在基础设置启用 Codex，选择自动续期模式，并登录独立可写目录；Docker 需要使用 managed 镜像。';
+  const unavailable = mode === 'readonly' ? '当前为 readonly 模式，仅查询额度，无法加载模型或发送消息。请在基础设置启用 Codex，并切换到 managed（自动续期）。'
+    : data.codexEnabled === false ? '当前为 managed 模式，但 Codex 未启用。请在基础设置启用 Codex 后加载模型。'
+    : '模型加载与发送需要启用 Codex，并使用 managed（自动续期）模式。';
+  $('message-availability').textContent = data.canSend ? '' : unavailable;
+  $('message-configure').hidden = data.canSend;
+  $('message-model').disabled = !data.canSend;
+  if (!$('message-model').value && $('message-model').options.length === 1) $('message-model').options[0].textContent = data.canSend ? '请加载账号可用模型' : mode === 'readonly' ? 'readonly 模式暂不支持模型加载' : '请先启用 Codex';
+  $('message-mode-hint').textContent = data.canSend ? '发送将使用此服务目录中登录的订阅账号。若加载失败，请检查 Codex CLI 和登录状态。' : 'Docker 请先部署 managed 镜像，在独立可写目录登录订阅账号，然后保存基础设置。';
   $('message-models').disabled = !data.canSend;
   $('message-send').disabled = messageSending || data.running || !data.canSend || !data.schedule.model;
   $('message-runs').innerHTML = data.runs.length ? data.runs.map(run => {

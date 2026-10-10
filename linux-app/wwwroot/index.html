@@ -10,7 +10,7 @@
   <div class="shell">
     <header class="masthead">
       <a class="brand" href="/"><img src="/icon.svg" alt="" width="44" height="44"><span>AIClock<small>小屏幕控制台</small></span></a>
-      <span class="connection" id="connection">正在连接服务</span>
+      <div class="service-status"><span class="service-mode" id="service-mode" aria-live="polite">Codex 模式 · 加载中</span><span class="connection" id="connection">正在连接服务</span></div>
     </header>
     <nav class="navigation" aria-label="主导航">
       <button class="active" data-view="overview" aria-current="page">额度概览</button>
@@ -32,6 +32,8 @@
             <label class="checkbox-label"><input id="message-enabled" type="checkbox">每天定时发送一条消息</label>
             <label>每日发送时间<input id="message-time" type="time" value="08:00" required><small id="message-timezone">按服务时区执行</small></label>
             <label>模型<select id="message-model"><option value="">请加载账号可用模型</option></select></label>
+            <p id="message-availability" class="hint" role="status"></p>
+            <button class="text-button" id="message-configure" data-view="settings" type="button" hidden>配置 Codex →</button>
             <button id="message-models" class="button" type="button">加载可用模型</button>
             <p id="message-model-error" class="hint" role="status"></p>
             <label>简单消息<textarea id="message-text" rows="3" maxlength="1000" required>只回复 OK。</textarea><small>最多 1000 字符。每次创建独立会话，不携带之前的对话。</small></label>
