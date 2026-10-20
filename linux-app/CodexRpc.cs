@@ -150,8 +150,9 @@ public sealed class CodexRpc(string executable)
                 try { started = process.Start(); if (!started) throw new InvalidOperationException(); }
                 catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
                 { throw new BridgeException("无法启动 Codex CLI。请安装 codex 或配置 AICLOCK_CODEX_EXECUTABLE。", 502); }
-                var stderr = Drain(process.StandardError, timeout.Token);
-                var session = new Session(process, timeout.Token);
+                var diagnostics = new StartupDiagnostics();
+                var stderr = Drain(process.StandardError, diagnostics, timeout.Token);
+                var session = new Session(process, timeout.Token, diagnostics, stderr);
                 await session.Call("initialize", new { clientInfo = new { name = "aiclock_linux", title = "AIClock Linux Bridge", version = "0.1.0" } });
                 await session.Write(new { method = "initialized", @params = new { } });
                 var account = await session.Call("account/read", new { refreshToken = false });
@@ -176,21 +177,32 @@ public sealed class CodexRpc(string executable)
         finally { semaphore.Release(); }
     }
 
-    sealed class Session(Process process, CancellationToken ct)
+    sealed class Session(Process process, CancellationToken ct, StartupDiagnostics diagnostics, Task stderr)
     {
         int id;
         public Action<JsonElement>? Notification;
         public async Task Write(object message)
         {
-            await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(message).AsMemory(), ct);
-            await process.StandardInput.FlushAsync(ct);
+            try
+            {
+                await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(message).AsMemory(), ct);
+                await process.StandardInput.FlushAsync(ct);
+            }
+            catch (IOException) { ct.ThrowIfCancellationRequested(); throw await EarlyExit(); }
+        }
+        async Task<BridgeException> EarlyExit()
+        {
+            // Give the separate stderr reader time to consume the final startup error.
+            try { await stderr.WaitAsync(TimeSpan.FromMilliseconds(500), ct); }
+            catch (TimeoutException) { }
+            return diagnostics.EarlyExit(process);
         }
         async Task<JsonElement> Read()
         {
             while (true)
             {
                 var line = await process.StandardOutput.ReadLineAsync(ct);
-                if (line == null) throw new BridgeException("Codex App Server 提前退出，请检查 CLI 版本与登录状态。", 502);
+                if (line == null) throw await EarlyExit();
                 if (line.Length > 2_000_000) throw new BridgeException("Codex App Server 响应过大。", 502);
                 try { using var doc = JsonDocument.Parse(line); return doc.RootElement.Clone(); }
                 catch (JsonException) { }
@@ -229,9 +241,51 @@ public sealed class CodexRpc(string executable)
         return new BridgeException(auth ? "Codex 登录凭据失效，请重新登录。" : limited ? "Codex 额度不足或请求限流，请稍后重试。" : fallback, auth ? 401 : limited ? 429 : 502);
     }
 
-    static async Task Drain(StreamReader reader, CancellationToken ct)
+    sealed class StartupDiagnostics
     {
-        try { var buffer = new char[4096]; while (await reader.ReadAsync(buffer.AsMemory(), ct) > 0) { } }
+        readonly object gate = new();
+        string tail = "";
+        bool permission, missingBubblewrap, configuration;
+
+        public void Observe(string chunk)
+        {
+            lock (gate)
+            {
+                // Retain only a short overlap for matches across reads. Never expose raw stderr,
+                // which may contain account details, tokens or configured secrets.
+                var text = tail + chunk;
+                permission |= text.Contains("permission denied", StringComparison.OrdinalIgnoreCase)
+                    || text.Contains("operation not permitted", StringComparison.OrdinalIgnoreCase);
+                missingBubblewrap |= text.Contains("could not find bubblewrap", StringComparison.OrdinalIgnoreCase);
+                configuration |= text.Contains("error loading config", StringComparison.OrdinalIgnoreCase)
+                    || text.Contains("failed to load config", StringComparison.OrdinalIgnoreCase)
+                    || text.Contains("toml parse error", StringComparison.OrdinalIgnoreCase);
+                tail = text.Length > 256 ? text[^256..] : text;
+            }
+        }
+
+        public BridgeException EarlyExit(Process process)
+        {
+            lock (gate)
+            {
+                var code = process.HasExited ? $"（退出码 {process.ExitCode}）" : "";
+                var reason = configuration ? "CLI 输出提示配置加载失败，请检查自动续期目录中的 config.toml。"
+                    : permission ? "CLI 输出提示权限不足，请检查 Codex 目录内部文件和子目录的属主、权限及容器沙箱限制。"
+                    : missingBubblewrap ? "CLI 输出提示缺少 bubblewrap，请更新并重新构建服务镜像。"
+                    : "请检查 CLI 版本、配置与登录状态。";
+                return new BridgeException($"Codex App Server 提前退出{code}。{reason}", 502);
+            }
+        }
+    }
+
+    static async Task Drain(StreamReader reader, StartupDiagnostics diagnostics, CancellationToken ct)
+    {
+        try
+        {
+            var buffer = new char[4096]; int count;
+            while ((count = await reader.ReadAsync(buffer.AsMemory(), ct)) > 0)
+                diagnostics.Observe(new string(buffer, 0, count));
+        }
         catch (OperationCanceledException) { }
         catch (IOException) { }
     }

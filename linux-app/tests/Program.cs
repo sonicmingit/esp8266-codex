@@ -15,6 +15,16 @@ if (args.FirstOrDefault() == "app-server")
     var scenario = Environment.GetEnvironmentVariable("AICLOCK_FAKE_RPC") ?? "refresh";
     var refreshed = false;
     if (Environment.GetEnvironmentVariable("OPENAI_API_KEY") != null) Environment.Exit(10);
+    if (scenario.StartsWith("startup-"))
+    {
+        Console.Error.WriteLine(scenario switch
+        {
+            "startup-permission" => "could not find bubblewrap on PATH; Error: Permission denied (os error 13) secret-must-not-leak",
+            "startup-bubblewrap" => "Codex could not find bubblewrap on PATH secret-must-not-leak",
+            _ => "Error loading config: TOML parse error secret-must-not-leak"
+        });
+        Environment.Exit(23);
+    }
     while (Console.ReadLine() is { } line)
     {
         using var doc = JsonDocument.Parse(line); var root = doc.RootElement;
@@ -192,6 +202,20 @@ Add("RPC errors are sanitized and early exit is handled", async () =>
     Environment.SetEnvironmentVariable("AICLOCK_FAKE_RPC", "exit");
     await ExpectError(async () => await new CodexRpc(s.CodexExecutable).Fetch(s.Current.CodexHome, default), "提前退出");
 });
+Add("RPC startup failures report safe categories and exit codes without leaking stderr", async () =>
+{
+    var s = Store("rpc-startup-errors");
+    foreach (var (scenario, reason) in new[] { ("startup-permission", "权限不足"), ("startup-bubblewrap", "缺少 bubblewrap"), ("startup-config", "配置加载失败") })
+    {
+        Environment.SetEnvironmentVariable("AICLOCK_FAKE_RPC", scenario);
+        try { await new CodexRpc(s.CodexExecutable).Fetch(s.Current.CodexHome, default); throw new Exception("Expected startup failure"); }
+        catch (BridgeException e)
+        {
+            Check(e.StatusCode == 502 && e.Message.Contains(reason) && e.Message.Contains("退出码 23"), "Missing startup diagnostics: " + e.Message);
+            Check(!e.Message.Contains("secret-must-not-leak"), "Raw stderr leaked");
+        }
+    }
+});
 Add("Message model discovery and streaming completion preserve reply and quota", async () =>
 {
     var s = Store("message-rpc"); Environment.SetEnvironmentVariable("AICLOCK_FAKE_RPC", "message");
@@ -255,7 +279,7 @@ Add("Scheduled results survive restart, update quota and never send twice", asyn
     Check(await restart.Run(true, default) == null, "Repeated scheduled send after restart");
     var persisted = File.ReadAllText(Path.Combine(s.DataDirectory, "message-history.json"));
     Check(persisted.Contains("succeeded") && !persisted.Contains("fake-access"), "Missing record or leaked credentials");
-    var calls = File.ReadAllLines(Path.Combine(s.Current.CodexHome, "rpc-calls.txt"));
+    var calls = File.ReadAllLines(Path.Combine(Credentials.CodexHome(s.Current), "rpc-calls.txt"));
     Check(calls.Count(c => c == "turn/start") == 1, "More than one paid task");
 });
 Add("Failed scheduled turns and interrupted records never auto-retry", async () =>

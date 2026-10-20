@@ -98,6 +98,14 @@ docker compose -f compose.yaml down
 
 `down` 不会删除绑定的数据目录。旧命令 `bash deploy.sh readonly` 和 `bash deploy.sh managed` 仍会兼容，但都会部署包含两种模式组件的同一镜像。`AICLOCK_CODEX_VERSION` 可在 `.env` 修改，重新构建后生效。
 
+### Codex 启动时报权限或 bubblewrap 错误
+
+统一镜像已安装 `bubblewrap`，升级已有部署后需要重新构建镜像。Linux 原生运行自动续期模式时，也需安装发行版提供的 `bubblewrap` 包，例如 Ubuntu/Debian 使用 `sudo apt install bubblewrap`。
+
+自动续期目录中的 `auth.json` 可写还不够：Codex CLI 会在 `tmp/arg0` 创建 PATH 别名、设置目录权限，并使用缓存和日志目录。目录从其他容器复制或被其他服务修改后，应在宿主机确认自动续期目录及其内部文件、子目录的属主都与 `.env` 的 `AICLOCK_UID:AICLOCK_GID` 一致。宿主机的默认位置是 `AICLOCK_DATA_PATH` 下的 `codex`；调整过网页凭据路径时，以实际挂载位置为准。只修复顶层目录可能仍导致 CLI 提前退出。
+
+页面现在会为 App Server 提前退出显示退出码，以及权限、配置加载或缺少 bubblewrap 等错误类别。原始 CLI 错误输出可能包含账号与配置内容，不会直接返回网页。
+
 ## 3. Linux 原生运行
 
 需要 .NET 10 SDK。自动续期模式需要 Codex CLI；只读额度查询不依赖 CLI。

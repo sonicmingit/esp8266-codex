@@ -22,9 +22,10 @@ ENTRYPOINT ["dotnet", "AIClockBridge.Linux.dll"]
 FROM readonly AS managed
 USER root
 ARG CODEX_VERSION=0.162.0
-RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm ca-certificates bubblewrap \
     && npm install -g @openai/codex@${CODEX_VERSION} \
     && codex --version \
+    && bwrap --version \
     && npm cache clean --force \
     && rm -rf /var/lib/apt/lists/*
 ENV AICLOCK_CODEX_MODE=readonly AICLOCK_CODEX_HOME=/credentials/codex AICLOCK_MANAGED_CODEX_HOME=/data/codex
