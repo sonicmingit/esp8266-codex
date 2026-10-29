@@ -79,6 +79,10 @@ public sealed class SettingsStore
         if (s.DeviceHost == null || s.AdvertisedHost == null || s.Devices == null) throw new BridgeException("设备与服务地址不能为 null，未设置时请留空。");
         if (s.Port is < 1 or > 65535) throw new BridgeException("端口必须是 1～65535。");
         if (s.RefreshSeconds is < 60 or > 86400) throw new BridgeException("刷新间隔必须在 1～1440 分钟之间。");
+        if (s.MinRefreshSeconds is < 60 or > 86400 || s.MaxRefreshSeconds is < 60 or > 86400)
+            throw new BridgeException("最短和最长刷新间隔必须在 1～1440 分钟之间。");
+        if (s.MinRefreshSeconds > s.MaxRefreshSeconds) throw new BridgeException("最短刷新间隔不能大于最长刷新间隔。");
+        if (s.RefreshUnchangedThreshold is < 1 or > 100) throw new BridgeException("连续无变化次数必须在 1～100 之间。");
         if (s.CodexMode is not ("readonly" or "managed")) throw new BridgeException("Codex 模式必须是 readonly 或 managed。");
         ValidateMessageSchedule(s.MessageSchedule);
         if (s.MessageSchedule.Enabled && (!s.CodexEnabled || s.CodexMode != "managed"))

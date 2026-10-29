@@ -135,9 +135,9 @@ Add("Settings persist and invalid inputs are rejected", async () =>
 });
 Add("Readonly credentials, cache and firmware protocol", async () =>
 {
-    var s = Store("readonly"); var handler = new FakeHttp((request, _) =>
+    var s = Store("readonly"); var clock = new TestClock(DateTimeOffset.UtcNow); var handler = new FakeHttp((request, _) =>
     { Check(request.Headers.Authorization?.Parameter == "fake-access-one", "Credential header missing"); return Task.FromResult(FakeHttp.Response(200, weeklyJson)); });
-    using var service = new QuotaService(s, new HttpClient(handler)); await service.Refresh(true, default);
+    using var service = new QuotaService(s, new HttpClient(handler), clock); await service.Refresh(true, default);
     var usage = service.Snapshot()["codex"]; Check(!usage.Stale && usage.Weekly?.UsedPercent == 42, "No usage");
     using var status = JsonDocument.Parse(JsonSerializer.Serialize(service.FirmwareStatus()));
     var epoch = status.RootElement.GetProperty("ts").GetInt64();
@@ -149,7 +149,8 @@ Add("Readonly credentials, cache and firmware protocol", async () =>
         "Firmware lost the fixed reset instant");
     Check(status.RootElement.GetProperty("codex").GetProperty("primary_pct").ValueKind == JsonValueKind.Null, "Invented primary window");
     var cache = File.ReadAllText(Path.Combine(s.DataDirectory, "usage-cache.json")); Check(!cache.Contains("fake-access"), "Secret persisted in quota cache");
-    using var restart = new QuotaService(s, new HttpClient(new FakeHttp((_, _) => Task.FromResult(FakeHttp.Response(503, "")))));
+    clock.Advance(TimeSpan.FromSeconds(60));
+    using var restart = new QuotaService(s, new HttpClient(new FakeHttp((_, _) => Task.FromResult(FakeHttp.Response(503, "")))), clock);
     await restart.Refresh(true, default); var stale = restart.Snapshot()["codex"];
     Check(stale.Stale && stale.Weekly?.UsedPercent == 42 && stale.Error != null, "Lost weekly-only cache on error");
 });
@@ -192,6 +193,144 @@ Add("Device edits preserve quota; interval edits reschedule polling", async () =
     s.Save(s.Current with { DeviceHost = "192.168.1.50", RefreshSeconds = 240 }); service.SettingsChanged();
     var state = service.Snapshot()["codex"];
     Check(state.Weekly?.UsedPercent == 42 && state.FetchedAt == at && state.NextAttemptAt == at?.AddSeconds(240), "Unrelated settings cleared quota");
+});
+Add("Adaptive settings migrate, persist and validate bounds", async () =>
+{
+    var s = Store("adaptive-settings");
+    var path = Path.Combine(s.DataDirectory, "settings.json");
+    var old = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+    foreach (var key in new[] { "adaptiveRefreshEnabled", "minRefreshSeconds", "maxRefreshSeconds", "refreshUnchangedThreshold" }) old.Remove(key);
+    old["refreshSeconds"] = 900;
+    File.WriteAllText(path, old.ToJsonString());
+    var migrated = new SettingsStore().Current;
+    Check(migrated.AdaptiveRefreshEnabled && migrated.RefreshSeconds == 900 && migrated.MinRefreshSeconds == 60
+        && migrated.MaxRefreshSeconds == 600 && migrated.RefreshUnchangedThreshold == 3, "Legacy defaults lost");
+    s.Save(migrated with { MinRefreshSeconds = 90, MaxRefreshSeconds = 3600, RefreshUnchangedThreshold = 5 });
+    var saved = new SettingsStore().Current;
+    Check(saved.MinRefreshSeconds == 90 && saved.MaxRefreshSeconds == 3600 && saved.RefreshUnchangedThreshold == 5, "Adaptive settings not persisted");
+    foreach (var invalid in new[] { saved with { MinRefreshSeconds = 59 }, saved with { MaxRefreshSeconds = 86401 }, saved with { MinRefreshSeconds = 3601 } })
+        await ExpectError(() => { s.Save(invalid); return Task.CompletedTask; }, "刷新间隔");
+    foreach (var threshold in new[] { 0, 101 })
+        await ExpectError(() => { s.Save(saved with { RefreshUnchangedThreshold = threshold }); return Task.CompletedTask; }, "无变化次数");
+});
+Add("Adaptive polling backs off after consecutive unchanged windows and speeds up on changes", async () =>
+{
+    var s = Store("adaptive-cadence"); var clock = new TestClock(DateTimeOffset.UtcNow);
+    var percent = 42.0;
+    var handler = new FakeHttp((_, _) => Task.FromResult(FakeHttp.Response(200,
+        JsonSerializer.Serialize(new { rate_limit = new { primary_window = new { used_percent = percent, limit_window_seconds = 604800, reset_at = 2000000000 } } }))));
+    using var service = new QuotaService(s, new HttpClient(handler), clock);
+    await service.Refresh(false, default);
+    Check(service.Snapshot()["codex"].CurrentRefreshSeconds == 120 && service.Snapshot()["codex"].UnchangedRefreshCount == 0, "First response treated as unchanged");
+    async Task Next()
+    {
+        var due = service.Snapshot()["codex"].NextAttemptAt!.Value;
+        clock.Advance(due - clock.GetUtcNow() - TimeSpan.FromSeconds(1));
+        var count = handler.Count; await service.Refresh(false, default);
+        Check(handler.Count == count && !service.Snapshot()["codex"].Stale, "Polled early or idle data marked stale");
+        clock.Advance(TimeSpan.FromSeconds(1)); await service.Refresh(false, default);
+        Check(handler.Count == count + 1, "Did not poll at adaptive deadline");
+    }
+    for (var i = 0; i < 12; i++) await Next();
+    Check(service.Snapshot()["codex"].CurrentRefreshSeconds == 600, "Maximum interval not enforced");
+    // A weekly-only change, including fractions below the rounded display precision,
+    // must wake the cadence without inventing a primary window.
+    foreach (var expected in new[] { 300, 150, 75, 60, 60 })
+    {
+        percent += 0.01; await Next(); var state = service.Snapshot()["codex"];
+        Check(state.CurrentRefreshSeconds == expected && state.UnchangedRefreshCount == 0 && state.Primary == null, "Change did not shorten interval within bounds");
+    }
+});
+Add("Codex and Claude learn independent refresh intervals", async () =>
+{
+    var s = Store("adaptive-independent"); s.Save(s.Current with { ClaudeEnabled = true });
+    File.WriteAllText(Path.Combine(s.Current.ClaudeHome, ".credentials.json"), "{\"claudeAiOauth\":{\"accessToken\":\"fake-claude\"}}");
+    var clock = new TestClock(DateTimeOffset.UtcNow); var percent = 0;
+    var handler = new FakeHttp((request, _) => Task.FromResult(FakeHttp.Response(200, request.RequestUri!.Host == "chatgpt.com"
+        ? JsonSerializer.Serialize(new { rate_limit = new { primary_window = new { used_percent = ++percent, limit_window_seconds = 18000, reset_at = 2000000000 } } })
+        : "{\"five_hour\":{\"utilization\":8.5,\"resets_at\":\"2030-01-01T00:00:00Z\"}}")));
+    using var service = new QuotaService(s, new HttpClient(handler), clock);
+    await service.Refresh(false, default);
+    for (var i = 0; i < 3; i++) { clock.Advance(TimeSpan.FromSeconds(120)); await service.Refresh(false, default); }
+    var data = service.Snapshot();
+    Check(data["codex"].CurrentRefreshSeconds == 60 && data["claude"].CurrentRefreshSeconds == 240, "Provider schedules coupled");
+});
+Add("Errors break unchanged streaks and adaptive settings cannot bypass rate limits", async () =>
+{
+    var s = Store("adaptive-errors"); s.Save(s.Current with { RefreshUnchangedThreshold = 2 });
+    var clock = new TestClock(DateTimeOffset.UtcNow); var status = 200;
+    var handler = new FakeHttp((_, _) => Task.FromResult(FakeHttp.Response(status, weeklyJson)));
+    using var service = new QuotaService(s, new HttpClient(handler), clock);
+    async Task Next() { clock.Advance(service.Snapshot()["codex"].NextAttemptAt!.Value - clock.GetUtcNow()); await service.Refresh(false, default); }
+    await service.Refresh(false, default); await Next();
+    Check(service.Snapshot()["codex"].UnchangedRefreshCount == 1, "No unchanged streak");
+    status = 503; await Next(); var failed = service.Snapshot()["codex"];
+    Check(failed.UnchangedRefreshCount == 0 && failed.CurrentRefreshSeconds == 120 && failed.Stale && failed.Weekly?.UsedPercent == 42, "Error treated as idle or cache lost");
+    status = 200; await Next();
+    Check(service.Snapshot()["codex"].CurrentRefreshSeconds == 120, "Error counted toward threshold");
+    await Next(); Check(service.Snapshot()["codex"].CurrentRefreshSeconds == 240, "Recovery no longer adapts");
+    status = 429; await Next(); var until = service.Snapshot()["codex"].NextAttemptAt;
+    s.Save(s.Current with { RefreshSeconds = 60, MinRefreshSeconds = 60, MaxRefreshSeconds = 60 }); service.SettingsChanged();
+    Check(service.Snapshot()["codex"].NextAttemptAt == until, "Settings bypassed 429");
+    var count = handler.Count; await service.Refresh(true, default);
+    Check(handler.Count == count, "Manual refresh bypassed 429");
+    service.RecordCodexUsage(s.Current, null, new QuotaWindow(43, 10080, 2000000000));
+    Check(service.Snapshot()["codex"].NextAttemptAt == until, "Message quota bypassed 429");
+    clock.Advance(until!.Value - clock.GetUtcNow()); status = 200; await service.Refresh(false, default);
+    Check(handler.Count == count + 1 && !service.Snapshot()["codex"].Stale, "Did not recover after 429");
+});
+Add("Adaptive policy edits reset cadence, device edits preserve it and fixed mode stays fixed", async () =>
+{
+    var s = Store("adaptive-policy"); s.Save(s.Current with { RefreshUnchangedThreshold = 1 });
+    var clock = new TestClock(DateTimeOffset.UtcNow);
+    using var service = new QuotaService(s, new HttpClient(new FakeHttp((_, _) => Task.FromResult(FakeHttp.Response(200, weeklyJson)))), clock);
+    async Task Next() { clock.Advance(service.Snapshot()["codex"].NextAttemptAt!.Value - clock.GetUtcNow()); await service.Refresh(false, default); }
+    await service.Refresh(false, default); await Next();
+    s.Save(s.Current with { DeviceHost = "192.168.1.50" }); service.SettingsChanged();
+    Check(service.Snapshot()["codex"].CurrentRefreshSeconds == 240, "Device edit reset learning");
+    s.Save(s.Current with { MinRefreshSeconds = 180, MaxRefreshSeconds = 180 }); service.SettingsChanged();
+    Check(service.Snapshot()["codex"].CurrentRefreshSeconds == 180 && service.Snapshot()["codex"].NextAttemptAt == clock.GetUtcNow().AddSeconds(180), "Policy not clamped/rescheduled");
+    await Next(); Check(service.Snapshot()["codex"].CurrentRefreshSeconds == 180, "Equal bounds not enforced");
+    s.Save(s.Current with { AdaptiveRefreshEnabled = false, RefreshSeconds = 300 }); service.SettingsChanged();
+    for (var i = 0; i < 3; i++) await Next();
+    Check(service.Snapshot()["codex"].CurrentRefreshSeconds == 300 && service.Snapshot()["codex"].UnchangedRefreshCount == 0, "Fixed mode adapted");
+});
+Add("Successful message activates the shortest cadence and credential changes reset learning", async () =>
+{
+    var s = Store("adaptive-activity"); s.Save(s.Current with { RefreshUnchangedThreshold = 1 });
+    var clock = new TestClock(DateTimeOffset.UtcNow);
+    var handler = new FakeHttp((_, _) => Task.FromResult(FakeHttp.Response(200, weeklyJson)));
+    using var service = new QuotaService(s, new HttpClient(handler), clock);
+    await service.Refresh(false, default); clock.Advance(TimeSpan.FromSeconds(120)); await service.Refresh(false, default);
+    service.RecordCodexUsage(s.Current, null, new QuotaWindow(43, 10080, 2000000000));
+    Check(service.Snapshot()["codex"].CurrentRefreshSeconds == 60 && service.Snapshot()["codex"].NextAttemptAt == clock.GetUtcNow().AddSeconds(60), "Message did not activate shortest interval");
+    var auth = Path.Combine(s.Current.CodexHome, "auth.json");
+    File.WriteAllText(auth, "{\"tokens\":{\"access_token\":\"fake-new-account-token\"}}");
+    clock.Advance(TimeSpan.FromSeconds(60)); await service.Refresh(false, default);
+    Check(service.Snapshot()["codex"].CurrentRefreshSeconds == 120 && service.Snapshot()["codex"].UnchangedRefreshCount == 0, "New identity inherited old cadence");
+});
+Add("Restart probes cached quota but preserves failed-request cooldowns", async () =>
+{
+    var s = Store("adaptive-cache"); s.Save(s.Current with { RefreshUnchangedThreshold = 1 });
+    var clock = new TestClock(DateTimeOffset.UtcNow); var status = 200;
+    var handler = new FakeHttp((_, _) => Task.FromResult(FakeHttp.Response(status, weeklyJson)));
+    using (var service = new QuotaService(s, new HttpClient(handler), clock))
+    {
+        await service.Refresh(false, default); clock.Advance(TimeSpan.FromSeconds(120)); await service.Refresh(false, default);
+        Check(service.Snapshot()["codex"].CurrentRefreshSeconds == 240, "Cache setup failed");
+    }
+    using (var restart = new QuotaService(s, new HttpClient(handler), clock))
+    {
+        Check(restart.Snapshot()["codex"].Stale && restart.Snapshot()["codex"].CurrentRefreshSeconds == 120, "Stale cadence restored");
+        var count = handler.Count; await restart.Refresh(false, default);
+        Check(handler.Count == count, "Startup bypassed minimum throttle");
+        clock.Advance(TimeSpan.FromSeconds(60));
+        status = 429; await restart.Refresh(false, default);
+        Check(handler.Count == count + 1, "Startup did not probe cached quota");
+    }
+    using var limited = new QuotaService(s, new HttpClient(handler), clock);
+    var before = handler.Count; await limited.Refresh(true, default);
+    Check(handler.Count == before && limited.Snapshot()["codex"].NextAttemptAt == clock.GetUtcNow().AddSeconds(300), "Restart bypassed failed-request cooldown");
 });
 Add("Codex RPC initializes, ignores notifications, refreshes once without turns", async () =>
 {
@@ -365,5 +504,6 @@ sealed class FakeHttp(Func<HttpRequestMessage, CancellationToken, Task<HttpRespo
 sealed class TestClock(DateTimeOffset now) : TimeProvider
 {
     public override DateTimeOffset GetUtcNow() => now;
+    public void Advance(TimeSpan duration) => now += duration;
     public override TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
 }

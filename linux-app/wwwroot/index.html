@@ -69,8 +69,14 @@
           <div class="settings-grid">
             <section class="panel"><div class="panel-title"><span class="section-number">01</span><h2>设备与连接</h2></div>
               <label>设备可访问的服务地址<input id="advertised-host" placeholder="192.168.1.20:8765" autocomplete="off"><small>填写这台电脑的局域网 IP 与对外端口。Docker 使用宿主机地址。</small></label>
-              <div class="form-grid"><label>服务监听端口<input id="port" type="number" min="1" max="65535" required></label><label>额度刷新间隔（分钟）<input id="refresh-minutes" type="number" min="1" max="1440" step="0.01" required><small>1～1440 分钟，支持小数。</small></label></div>
+              <div class="form-grid"><label>服务监听端口<input id="port" type="number" min="1" max="65535" required></label><label>起始 / 固定刷新间隔（分钟）<input id="refresh-minutes" type="number" min="1" max="1440" step="0.01" required><small>动态模式从此间隔开始（自动限制在最短与最长之间）；关闭动态模式后使用固定间隔。</small></label></div>
               <p id="port-hint" class="hint"></p>
+              <label class="checkbox-label"><input id="adaptive-refresh-enabled" type="checkbox">根据额度变化动态调整刷新间隔</label>
+              <div id="adaptive-refresh-fields">
+                <div class="form-grid"><label>最短刷新间隔（分钟）<input id="min-refresh-minutes" type="number" min="1" max="1440" step="0.01" required></label><label>最长刷新间隔（分钟）<input id="max-refresh-minutes" type="number" min="1" max="1440" step="0.01" required></label></div>
+                <label>连续无变化次数<input id="refresh-unchanged-threshold" type="number" min="1" max="100" step="1" required><small>连续达到此次数后，间隔加倍；额度变化时，间隔减半。</small></label>
+                <p class="hint">Codex、Claude 分别调整。默认范围为 1～10 分钟，连续 3 次无变化后放慢；查询失败不算无变化，限流退避优先。根据额度变化推测使用情况，空闲后再次使用可能需等到下次查询才会加快。</p>
+              </div>
             </section>
             <section class="panel"><div class="panel-title"><span class="section-number">02</span><h2>额度数据来源</h2></div>
               <label class="checkbox-label"><input id="codex-enabled" type="checkbox">启用 Codex 额度查询</label>

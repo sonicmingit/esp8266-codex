@@ -41,7 +41,8 @@ function renderUsage() {
     if (!data.enabled) return `<article class="quota-card ${provider}">${head}<div class="empty-state"><strong>按需开启。</strong><p class="subtle">在基础设置中启用 ${name}，并填写登录凭据目录。</p><button class="text-button" data-configure>前往设置 →</button></div></article>`;
     const current = windows[0];
     const remaining = current ? (100 - current.usedPercent).toFixed(1).replace('.0', '') : '—';
-    return `<article class="quota-card ${provider}">${head}<div class="quota-value"><strong class="quota-number">${remaining}${current ? '<span>%</span>' : ''}</strong><span class="quota-label">${current ? `${escapeHtml(windowName(current))}剩余` : '等待额度数据'}</span></div>${windows.map(renderWindow).join('')}${data.error ? `<p class="quota-error">${escapeHtml(data.error)}${windows.length ? ' 显示的是上次成功数据。' : ''}</p>` : ''}<div class="quota-foot"><span>成功查询 ${data.fetchedAt ? new Date(data.fetchedAt).toLocaleString('zh-CN', { hour12: false }) : '尚无'}</span><span>${data.nextAttemptAt ? `下次查询 ${new Date(data.nextAttemptAt).toLocaleTimeString('zh-CN', { hour12: false })}` : '等待后台查询'}</span></div></article>`;
+    const cadence = data.currentRefreshSeconds > 0 ? `<span>当前间隔 ${Number((data.currentRefreshSeconds / 60).toFixed(2))} 分钟</span>` : '';
+    return `<article class="quota-card ${provider}">${head}<div class="quota-value"><strong class="quota-number">${remaining}${current ? '<span>%</span>' : ''}</strong><span class="quota-label">${current ? `${escapeHtml(windowName(current))}剩余` : '等待额度数据'}</span></div>${windows.map(renderWindow).join('')}${data.error ? `<p class="quota-error">${escapeHtml(data.error)}${windows.length ? ' 显示的是上次成功数据。' : ''}</p>` : ''}<div class="quota-foot"><span>成功查询 ${data.fetchedAt ? new Date(data.fetchedAt).toLocaleString('zh-CN', { hour12: false }) : '尚无'}</span>${cadence}<span>${data.nextAttemptAt ? `下次查询 ${new Date(data.nextAttemptAt).toLocaleTimeString('zh-CN', { hour12: false })}` : '等待后台查询'}</span></div></article>`;
   }).join('');
   document.querySelectorAll('[data-configure]').forEach(button => button.onclick = () => view('settings'));
 }
@@ -202,10 +203,24 @@ function renderDeviceList() {
   });
 }
 function renderDevices() { renderDeviceTargets(); renderDeviceList(); }
+function updateRefreshFields() {
+  const enabled = $('adaptive-refresh-enabled').checked;
+  $('adaptive-refresh-fields').hidden = !enabled;
+  ['min-refresh-minutes', 'max-refresh-minutes', 'refresh-unchanged-threshold'].forEach(id => $(id).disabled = !enabled);
+  $('max-refresh-minutes').setCustomValidity(enabled && Number($('min-refresh-minutes').value) > Number($('max-refresh-minutes').value) ? '最长刷新间隔不能小于最短刷新间隔。' : '');
+}
+$('adaptive-refresh-enabled').onchange = updateRefreshFields;
+$('min-refresh-minutes').oninput = updateRefreshFields;
+$('max-refresh-minutes').oninput = updateRefreshFields;
 async function loadSettings() {
   const data = await api('/api/settings'); state.settings = data.settings; state.runtime = data.runtime; const s = data.settings;
   $('advertised-host').value = s.advertisedHost; $('port').value = data.runtime.portFromEnvironment || data.runtime.docker ? data.runtime.port : s.port;
   $('refresh-minutes').value = Number((s.refreshSeconds / 60).toFixed(2)); $('codex-enabled').checked = s.codexEnabled; $('claude-enabled').checked = s.claudeEnabled;
+  $('adaptive-refresh-enabled').checked = s.adaptiveRefreshEnabled;
+  $('min-refresh-minutes').value = Number((s.minRefreshSeconds / 60).toFixed(2));
+  $('max-refresh-minutes').value = Number((s.maxRefreshSeconds / 60).toFixed(2));
+  $('refresh-unchanged-threshold').value = s.refreshUnchangedThreshold;
+  updateRefreshFields();
   $('codex-home').value = s.codexHome; $('codex-managed-home').value = s.codexManagedHome; $('claude-home').value = s.claudeHome; $('codex-mode').value = s.codexMode;
   renderServiceMode(s.codexMode);
   $('port').disabled = data.runtime.portFromEnvironment || data.runtime.docker;
@@ -225,7 +240,14 @@ $('codex-login-cancel').onclick = async () => {
 };
 setInterval(() => { if ($('codex-mode').value === 'managed') loadCodexLogin(); }, 1200);
 $('settings-form').onsubmit = event => { event.preventDefault(); action($('save-settings'), async () => {
-  const result = await api('/api/settings', { port: $('port').disabled ? state.settings.port : Number($('port').value), deviceHost: '', devices: state.settings.devices, advertisedHost: $('advertised-host').value.trim(), refreshSeconds: Math.round(Number($('refresh-minutes').value) * 60), codexEnabled: $('codex-enabled').checked, claudeEnabled: $('claude-enabled').checked, codexMode: $('codex-mode').value, codexHome: $('codex-home').value.trim(), codexManagedHome: $('codex-managed-home').value.trim(), claudeHome: $('claude-home').value.trim(), messageSchedule: messagesState?.schedule ?? state.settings.messageSchedule });
+  const result = await api('/api/settings', {
+    port: $('port').disabled ? state.settings.port : Number($('port').value), deviceHost: '', devices: state.settings.devices, advertisedHost: $('advertised-host').value.trim(),
+    refreshSeconds: Math.round(Number($('refresh-minutes').value) * 60), adaptiveRefreshEnabled: $('adaptive-refresh-enabled').checked,
+    minRefreshSeconds: Math.round(Number($('min-refresh-minutes').value) * 60), maxRefreshSeconds: Math.round(Number($('max-refresh-minutes').value) * 60),
+    refreshUnchangedThreshold: Number($('refresh-unchanged-threshold').value),
+    codexEnabled: $('codex-enabled').checked, claudeEnabled: $('claude-enabled').checked, codexMode: $('codex-mode').value,
+    codexHome: $('codex-home').value.trim(), codexManagedHome: $('codex-managed-home').value.trim(), claudeHome: $('claude-home').value.trim(), messageSchedule: messagesState?.schedule ?? state.settings.messageSchedule
+  });
   await loadSettings(); await loadUsage(); await loadMessages(); toast(result.restartRequired ? '设置已保存。监听端口需重启服务后生效，请同步更新设备服务地址。' : '设置已保存，后台将按刷新间隔查询。');
 }); };
 function selectedDeviceId() { if (!state.deviceTargetId) throw new Error('请先添加并选择一台小屏幕。'); return state.deviceTargetId; }

@@ -9,15 +9,19 @@ public sealed class QuotaService : BackgroundService
     readonly SettingsStore settings;
     readonly HttpClient http;
     readonly CodexRpc rpc;
+    readonly TimeProvider clock;
+    BridgeSettings refreshSettings;
     readonly SemaphoreSlim refreshGate = new(1);
     readonly object gate = new();
     readonly Dictionary<string, UsageState> states = new() { ["codex"] = new(), ["claude"] = new() };
     readonly Dictionary<string, string> identities = new();
     readonly Dictionary<string, DateTimeOffset> cooldowns = new();
     readonly string cachePath;
-    public QuotaService(SettingsStore settings, HttpClient http)
+    public QuotaService(SettingsStore settings, HttpClient http, TimeProvider? clock = null)
     {
         this.settings = settings; this.http = http;
+        this.clock = clock ?? TimeProvider.System;
+        refreshSettings = settings.Current;
         rpc = new(settings.CodexExecutable);
         cachePath = Path.Combine(settings.DataDirectory, "usage-cache.json");
         try
@@ -26,8 +30,17 @@ public sealed class QuotaService : BackgroundService
             if (cache != null) foreach (var provider in states.Keys.ToArray())
             {
                 if (cache.TryGetValue(provider, out var e) && e.Identity == Credentials.Identity(settings.Current, provider)
-                    && e.Usage.FetchedAt is { } at && DateTimeOffset.UtcNow - at < TimeSpan.FromHours(24))
-                { states[provider] = e.Usage with { Stale = true }; identities[provider] = e.Identity; }
+                    && e.Usage.FetchedAt is { } at && this.clock.GetUtcNow() - at < TimeSpan.FromHours(24))
+                {
+                    // Probe after the minimum cooldown on startup; old schedules
+                    // and activity counters may belong to a previous policy.
+                    states[provider] = e.Usage with { Stale = true, NextAttemptAt = e.Usage.Error == null ? null : e.Usage.NextAttemptAt,
+                        CurrentRefreshSeconds = InitialInterval(refreshSettings), UnchangedRefreshCount = 0 };
+                    identities[provider] = e.Identity;
+                    if (e.Usage.Error != null && e.Usage.NextAttemptAt is { } due && due > this.clock.GetUtcNow())
+                        cooldowns[provider] = due;
+                    else cooldowns[provider] = (e.Usage.AttemptedAt ?? at).AddSeconds(60);
+                }
             }
         }
         catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { }
@@ -43,7 +56,9 @@ public sealed class QuotaService : BackgroundService
                 var enabled = k.Key == "codex" ? config.CodexEnabled : config.ClaudeEnabled;
                 if (!enabled) return new UsageState { Enabled = false };
                 var s = k.Value;
-                return s with { Enabled = true, Stale = s.Stale || s.FetchedAt == null || DateTimeOffset.UtcNow - s.FetchedAt > TimeSpan.FromSeconds(Math.Max(300, config.RefreshSeconds * 2)) };
+                var interval = CurrentInterval(config, s);
+                return s with { Enabled = true, CurrentRefreshSeconds = interval,
+                    Stale = s.Stale || s.FetchedAt == null || clock.GetUtcNow() - s.FetchedAt > TimeSpan.FromSeconds(Math.Max(300, interval * 2)) };
             });
         }
     }
@@ -53,16 +68,25 @@ public sealed class QuotaService : BackgroundService
         lock (gate)
         {
             var config = settings.Current;
+            var policyChanged = config.RefreshSeconds != refreshSettings.RefreshSeconds
+                || config.AdaptiveRefreshEnabled != refreshSettings.AdaptiveRefreshEnabled
+                || config.MinRefreshSeconds != refreshSettings.MinRefreshSeconds
+                || config.MaxRefreshSeconds != refreshSettings.MaxRefreshSeconds
+                || config.RefreshUnchangedThreshold != refreshSettings.RefreshUnchangedThreshold;
+            refreshSettings = config;
             foreach (var key in states.Keys.ToArray())
             {
                 var enabled = key == "codex" ? config.CodexEnabled : config.ClaudeEnabled;
                 if (!enabled || !identities.TryGetValue(key, out var identity) || identity != Credentials.Identity(config, key))
                 { states[key] = new(); identities.Remove(key); continue; }
-                // Device/port edits should not erase good quota. Changing only
-                // the interval reschedules polling without bypassing backoff.
+                // Device edits retain the learned cadence. Policy edits restart
+                // learning without erasing quota or bypassing error cooldowns.
+                var interval = policyChanged ? InitialInterval(config) : CurrentInterval(config, states[key]);
+                states[key] = states[key] with { CurrentRefreshSeconds = interval,
+                    UnchangedRefreshCount = policyChanged ? 0 : states[key].UnchangedRefreshCount };
                 if (states[key].AttemptedAt is { } attempted)
                 {
-                    var due = attempted.AddSeconds(config.RefreshSeconds);
+                    var due = attempted.AddSeconds(interval);
                     if (cooldowns.TryGetValue(key, out var cooldown) && cooldown > due) due = cooldown;
                     states[key] = states[key] with { NextAttemptAt = due };
                 }
@@ -112,7 +136,7 @@ public sealed class QuotaService : BackgroundService
         var config = settings.Current;
         if (!(provider == "codex" ? config.CodexEnabled : config.ClaudeEnabled)) return;
         var identity = Credentials.Identity(config, provider);
-        var now = DateTimeOffset.UtcNow;
+        var now = clock.GetUtcNow();
         lock (gate)
         {
             if (!identities.TryGetValue(provider, out var old) || old != identity)
@@ -136,7 +160,7 @@ public sealed class QuotaService : BackgroundService
         catch (OperationCanceledException) when (!ct.IsCancellationRequested) { error = "额度查询超时，请稍后重试。"; }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { error = "无法访问凭据或服务目录，请检查权限。"; }
         if (ct.IsCancellationRequested) return;
-        now = DateTimeOffset.UtcNow;
+        now = clock.GetUtcNow();
         lock (gate)
         {
             // Discard old-path requests when settings were changed during a network call.
@@ -148,12 +172,36 @@ public sealed class QuotaService : BackgroundService
             }
             identities[provider] = after;
             cooldowns[provider] = now.AddSeconds(backoff);
-            var next = now.AddSeconds(Math.Max(config.RefreshSeconds, backoff));
+            var previous = states[provider];
+            var interval = CurrentInterval(config, previous);
+            var unchanged = 0;
+            if (error == null && config.AdaptiveRefreshEnabled && previous.FetchedAt != null)
+            {
+                // Compare server windows, never the locally ticking countdown.
+                if (previous.Primary != windows.Primary || previous.Weekly != windows.Weekly)
+                    interval = Math.Max(config.MinRefreshSeconds, interval / 2);
+                else
+                {
+                    unchanged = previous.UnchangedRefreshCount + 1;
+                    if (unchanged >= config.RefreshUnchangedThreshold)
+                    { interval = Math.Min(config.MaxRefreshSeconds, interval * 2); unchanged = 0; }
+                }
+            }
+            var next = now.AddSeconds(Math.Max(interval, backoff));
             states[provider] = error == null
-                ? new UsageState { Primary = windows.Primary, Weekly = windows.Weekly, FetchedAt = now, AttemptedAt = now, NextAttemptAt = next, Enabled = true, Stale = false }
-                : states[provider] with { Error = error, AttemptedAt = now, NextAttemptAt = next, Enabled = true, Stale = true };
+                ? new UsageState { Primary = windows.Primary, Weekly = windows.Weekly, FetchedAt = now, AttemptedAt = now, NextAttemptAt = next,
+                    CurrentRefreshSeconds = interval, UnchangedRefreshCount = unchanged, Enabled = true, Stale = false }
+                : previous with { Error = error, AttemptedAt = now, NextAttemptAt = next, CurrentRefreshSeconds = interval,
+                    UnchangedRefreshCount = 0, Enabled = true, Stale = true };
         }
     }
+
+    static int InitialInterval(BridgeSettings config) => config.AdaptiveRefreshEnabled
+        ? Math.Clamp(config.RefreshSeconds, config.MinRefreshSeconds, config.MaxRefreshSeconds) : config.RefreshSeconds;
+
+    static int CurrentInterval(BridgeSettings config, UsageState state) => !config.AdaptiveRefreshEnabled
+        ? config.RefreshSeconds : state.CurrentRefreshSeconds > 0
+            ? Math.Clamp(state.CurrentRefreshSeconds, config.MinRefreshSeconds, config.MaxRefreshSeconds) : InitialInterval(config);
 
     async Task<(QuotaWindow? Primary, QuotaWindow? Weekly)> FetchReadonly(BridgeSettings config, string provider, CancellationToken ct)
     {
@@ -184,11 +232,11 @@ public sealed class QuotaService : BackgroundService
     public object FirmwareStatus()
     {
         var data = Snapshot(); var c = data["claude"]; var x = data["codex"];
-        static int? Remaining(QuotaWindow? w) => w?.ResetsAt is { } at ? (int)Math.Max(0, (at - DateTimeOffset.UtcNow.ToUnixTimeSeconds()) / 60) : null;
+        int? Remaining(QuotaWindow? w) => w?.ResetsAt is { } at ? (int)Math.Max(0, (at - clock.GetUtcNow().ToUnixTimeSeconds()) / 60) : null;
         return new
         {
-            ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds(), music_playing = false,
-            utc_offset_min = (int)TimeZoneInfo.Local.GetUtcOffset(DateTimeOffset.UtcNow).TotalMinutes,
+            ts = clock.GetUtcNow().ToUnixTimeSeconds(), music_playing = false,
+            utc_offset_min = (int)TimeZoneInfo.Local.GetUtcOffset(clock.GetUtcNow()).TotalMinutes,
             claude = new { status = c.Enabled && c.FetchedAt != null && !c.Stale ? "idle" : "offline", tokens_today = 0,
                 session_min = 0, session_window_min = 300, five_hour_pct = c.Primary?.UsedPercent,
                 five_hour_reset_min = Remaining(c.Primary), seven_day_pct = c.Weekly?.UsedPercent,
@@ -207,11 +255,15 @@ public sealed class QuotaService : BackgroundService
         lock (gate)
         {
             if (settings.Current != config) return;
-            var now = DateTimeOffset.UtcNow;
+            var now = clock.GetUtcNow();
+            var interval = config.AdaptiveRefreshEnabled ? config.MinRefreshSeconds : config.RefreshSeconds;
+            // Sending a message is an explicit activity signal.
+            var due = now.AddSeconds(interval);
+            if (cooldowns.TryGetValue("codex", out var cooldown) && cooldown > due) due = cooldown;
             identities["codex"] = Credentials.Identity(config, "codex");
             states["codex"] = new UsageState { Primary = primary, Weekly = weekly, FetchedAt = now,
-                AttemptedAt = now, NextAttemptAt = now.AddSeconds(config.RefreshSeconds), Enabled = true, Stale = false };
-            cooldowns["codex"] = now.AddSeconds(60);
+                AttemptedAt = now, NextAttemptAt = due, CurrentRefreshSeconds = interval, Enabled = true, Stale = false };
+            cooldowns["codex"] = cooldown > now.AddSeconds(60) ? cooldown : now.AddSeconds(60);
         }
     }
 }

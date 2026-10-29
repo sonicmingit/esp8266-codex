@@ -17,6 +17,10 @@ public sealed record BridgeSettings
     public string CodexManagedHome { get; init; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aiclock", "codex");
     public string ClaudeHome { get; init; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude");
     public int RefreshSeconds { get; init; } = 120;
+    public bool AdaptiveRefreshEnabled { get; init; } = true;
+    public int MinRefreshSeconds { get; init; } = 60;
+    public int MaxRefreshSeconds { get; init; } = 600;
+    public int RefreshUnchangedThreshold { get; init; } = 3;
     public MessageSchedule MessageSchedule { get; init; } = new();
 }
 
@@ -73,6 +77,8 @@ public sealed record UsageState
     public DateTimeOffset? FetchedAt { get; init; }
     public DateTimeOffset? AttemptedAt { get; init; }
     public DateTimeOffset? NextAttemptAt { get; init; }
+    public int CurrentRefreshSeconds { get; init; }
+    public int UnchangedRefreshCount { get; init; }
     public string? Error { get; init; }
     public bool Enabled { get; init; }
     public bool Stale { get; init; } = true;
