@@ -210,12 +210,24 @@ pio device monitor -b 115200
 |---|---|---|
 | GET | `/api/info` | 设备状态 JSON：ip/ssid/bridge/显示模式/当前显示/自定义精灵标记 |
 | POST | `/api/display` | `mode=auto\|claude\|codex\|dual\|net\|music\|stock` 切换屏幕显示（dual=双栏额度页，net=网速曲线页，music=音乐播放页，stock=股票行情页）|
+| POST | `/api/reset-time` | `format=countdown\|datetime` 切换额度重置显示，写入设备并在重启后保留 |
 | POST | `/api/bridge` | `host=ip:port` 设置桥接地址 |
 | POST | `/sprite/claude`、`/sprite/codex` | multipart 上传 GIF 并板上解码替换 |
 | POST | `/sprite/claude/reset`、`/sprite/codex/reset` | 删除自定义动画，恢复内置形象 |
 | GET | `/sprite/claude/raw`、`/sprite/codex/raw` | 当前生效动画的原始帧流 `[1B帧数][RGB565大端帧...]`（镜像窗口用）|
 
 `/api/info` 里的 `sprite_rev` 在每次上传/重置动画后自增，镜像端据此决定是否重新拉帧。
+
+### 额度重置时间显示
+
+设备设置网页的「额度重置时间」、Windows 托盘或 Linux 控制台的「重置时间显示」可切换：
+
+- `countdown`（默认）：桌宠页面顶部显示 5 小时窗口剩余时分和周窗口剩余天数（不足一天显示小时）；双栏额度页保留原来的时长格式。
+- `datetime`：显示重置的 `MM/DD` 和 `HH:mm`，桌宠页面、双栏额度页和额度用满后的提示使用同一个设置。
+
+串口同样支持 `#CMD {"reset_time_format":"datetime"}`；`/api/info` 和 USB 的 `#DEVICE` 握手返回 `reset_time_format`。
+新版 Windows / Mac / Linux Bridge 在 `/status` 和串口 `#STATUS` 中提供 `ts`（Unix 秒）、`utc_offset_min`（桥接端本地时间相对 UTC 的分钟偏移）与各窗口的 `*_reset_at`（固定的 Unix 重置时刻）。设备优先使用固定时刻显示日期时间，旧协议只有 `*_reset_min` 时可回退换算，无需 NTP，USB 关闭 Wi-Fi 时也可显示。Windows / Mac 额度缓存保留固定重置时刻，并实时计算剩余分钟，避免缓存期间重置时间随当前时间漂移。Linux Docker 的时区由 `TZ` 决定。
+日期时间显示到分钟，跨日、跨月和跨年自动换算，不包含年份。回退整分钟换算时可能比实际重置时刻早不到一分钟。未知重置时间或旧版桥接缺少时区时显示 `-`，升级桥接后恢复。时区偏移取状态快照时的偏移，跨夏令时的重置日期在下一次时区更新前可能有一小时偏差。
 
 ## 5. 网速曲线页（Mac + 设备同步显示）
 

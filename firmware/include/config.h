@@ -1,7 +1,7 @@
 #pragma once
 
 // ---- Firmware version (shown on the first-time WiFi setup screen & /api/info) ----
-#define FW_VERSION "0.4.3-sonic"
+#define FW_VERSION "0.4.4-sonic"
 
 // ---- Bridge polling ----
 #define BRIDGE_DEFAULT_PORT 8765
@@ -13,6 +13,7 @@
 #define WIFI_PORTAL_AP_NAME "AI-Clock-Setup"
 #define WIFI_CONFIG_FILE "/bridge_host.txt"
 #define DISPLAY_MODE_FILE "/display_mode.txt"
+#define RESET_TIME_FORMAT_FILE "/reset_time_format.txt"
 #define USB_WIFI_OFF_FILE "/usb_wifi_off.txt"
 
 // ---- Backlight ----

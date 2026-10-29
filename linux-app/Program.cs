@@ -105,6 +105,7 @@ app.MapGet("/api/devices/{id}/info", async (string id, DeviceService device, Can
     return info;
 });
 app.MapPost("/api/devices/{id}/pair", async (string id, DeviceService device, CancellationToken ct) => { await device.Pair(id, ct); return Results.Ok(new { ok = true }); });
+app.MapPost("/api/devices/{id}/reset-time", async (string id, ResetTimeRequest request, DeviceService device, CancellationToken ct) => { await device.ResetTimeFormat(id, request.Format, ct); return Results.Ok(new { ok = true }); });
 app.MapPost("/api/devices/{id}/display", async (string id, DisplayRequest request, DeviceService device, DeviceScheduleService schedule, CancellationToken ct) => { await device.Display(id, request.Mode, ct); schedule.Forget(id); return Results.Ok(new { ok = true }); });
 app.MapPost("/api/devices/{id}/brightness", async (string id, BrightnessRequest request, DeviceService device, DeviceScheduleService schedule, CancellationToken ct) =>
 {
@@ -162,6 +163,7 @@ static DeviceEntry NormalizeDevice(DeviceSaveRequest request, string id)
 app.Run();
 
 record DisplayRequest(string Mode);
+record ResetTimeRequest(string Format);
 record BrightnessRequest(int Level);
 record DeviceSaveRequest(string Name, string Host);
 record DeviceScheduleRequest(bool PageScheduleEnabled, string PageMode, string PageOnTime, string PageOffTime, int PageOffBrightness, bool NightModeEnabled, string NightStart, string NightEnd, int NightBrightness);

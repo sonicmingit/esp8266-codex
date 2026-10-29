@@ -26,6 +26,7 @@ sealed class SerialLink : IDisposable
     string _portName = "";
     string _firmwareVersion = "";
     string _displayMode = "auto";
+    string _resetTimeFormat = "countdown";
     int _brightness = 100;
     bool _usbWifiOff;
     DateTime _openedAt = DateTime.MinValue;
@@ -257,6 +258,7 @@ sealed class SerialLink : IDisposable
     {
         var version = "";
         var usbWifiOff = false;
+        var resetTimeFormat = "countdown";
         var jsonStart = line.IndexOf('{');
         if (jsonStart >= 0)
         {
@@ -264,6 +266,8 @@ sealed class SerialLink : IDisposable
             {
                 using var doc = JsonDocument.Parse(line[jsonStart..]);
                 if (doc.RootElement.TryGetProperty("fw", out var fw)) version = fw.GetString() ?? "";
+                if (doc.RootElement.TryGetProperty("reset_time_format", out var format))
+                    resetTimeFormat = format.GetString() == "datetime" ? "datetime" : "countdown";
                 if (doc.RootElement.TryGetProperty("usb_wifi_off", out var wifi)
                     && (wifi.ValueKind == JsonValueKind.True || wifi.ValueKind == JsonValueKind.False))
                     usbWifiOff = wifi.GetBoolean();
@@ -281,6 +285,7 @@ sealed class SerialLink : IDisposable
             }
             _firmwareVersion = version;
             _usbWifiOff = usbWifiOff;
+            _resetTimeFormat = resetTimeFormat;
         }
         if (!changed) return;
         _lastStatusAt = DateTime.MinValue;
@@ -330,6 +335,8 @@ sealed class SerialLink : IDisposable
         {
             if (command.TryGetValue("display", out var display) && display is string mode)
                 _displayMode = mode;
+            if (command.TryGetValue("reset_time_format", out var format) && format is string resetFormat)
+                _resetTimeFormat = resetFormat;
             if (command.TryGetValue("brightness", out var brightness))
                 _brightness = Convert.ToInt32(brightness);
             if (command.TryGetValue("usb_wifi_off", out var usbWifiOff))
@@ -343,7 +350,7 @@ sealed class SerialLink : IDisposable
     /// custom-sprite metadata, so those fields remain at their defaults.
     public DeviceInfo WiredDeviceInfo()
     {
-        string port, mode, firmware;
+        string port, mode, firmware, resetTimeFormat;
         int brightness;
         bool usbWifiOff;
         lock (_gate)
@@ -351,6 +358,7 @@ sealed class SerialLink : IDisposable
             if (!_linked) return null;
             port = _portName;
             mode = _displayMode;
+            resetTimeFormat = _resetTimeFormat;
             firmware = _firmwareVersion;
             brightness = _brightness;
             usbWifiOff = _usbWifiOff;
@@ -365,6 +373,7 @@ sealed class SerialLink : IDisposable
             Ssid = "USB",
             Bridge = "USB 有线",
             Mode = mode,
+            ResetTimeFormat = resetTimeFormat,
             Effective = mode,
             Showing = showing,
             LastUpdateS = 0,

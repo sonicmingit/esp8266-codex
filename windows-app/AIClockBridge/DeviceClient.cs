@@ -15,6 +15,7 @@ class DeviceInfo
     public string Ssid = "";
     public string Bridge = "";
     public string Mode = "auto";       // configured: auto | claude | codex | dual | net | music
+    public string ResetTimeFormat = "countdown";
     public string Effective = "auto";  // what's actually on screen (AUTO may promote to music)
     public string Showing = "";
     public int LastUpdateS = -1;       // seconds since the device last got /status data, -1 = never
@@ -143,6 +144,7 @@ static class DeviceClient
                 LastUpdateS = Int(root, "last_update_s", -1),
                 SpriteRev = Int(root, "sprite_rev"),
                 Brightness = Int(root, "brightness", 100),
+                ResetTimeFormat = Str(root, "reset_time_format", "countdown"),
                 Showing = Str(root, "showing"),
                 Wired = Bool(root, "wired"),
                 UsbWifiOff = Bool(root, "usb_wifi_off"),
@@ -176,6 +178,13 @@ static class DeviceClient
         if (SendWiredCommand?.Invoke(new Dictionary<string, object> { ["display"] = mode }) == true)
             return Task.CompletedTask;
         return PostForm("api/display", new() { ["mode"] = mode });
+    }
+
+    public static Task SetResetTimeFormat(string format)
+    {
+        if (SendWiredCommand?.Invoke(new Dictionary<string, object> { ["reset_time_format"] = format }) == true)
+            return Task.CompletedTask;
+        return PostForm("api/reset-time", new() { ["format"] = format });
     }
 
     /// POST /api/bridge  host=ip:port

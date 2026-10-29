@@ -145,11 +145,13 @@ function renderDeviceControls() {
   $('device-config-empty').hidden = active;
   $('device-setting-list').hidden = !active;
   $('set-display').disabled = !active;
+  $('set-reset-time').disabled = !active;
   $('set-brightness').disabled = !active;
   $('save-device-schedule').disabled = !active;
   $('device-setting-list').querySelectorAll('input, select').forEach(field => field.disabled = !active);
   if (!device) return;
   const info = state.deviceInfos[device.id];
+  $('reset-time-format').value = info?.reset_time_format === 'datetime' ? 'datetime' : 'countdown';
   $('display-mode').value = ['auto', 'codex', 'claude', 'dual'].includes(info?.mode) ? info.mode : 'auto';
   $('brightness').value = info?.brightness ?? device.dayBrightness ?? 100;
   $('page-schedule-enabled').checked = Boolean(device.pageScheduleEnabled);
@@ -232,6 +234,11 @@ $('device-add-form').onsubmit = event => { event.preventDefault(); action($('add
   state.deviceTargetId = entry.id; $('new-device-name').value = ''; $('new-device-host').value = ''; await loadSettings();
 }, '小屏幕已添加。'); };
 $('device-target').onchange = () => { state.deviceTargetId = $('device-target').value; renderDeviceTargets(); };
+$('set-reset-time').onclick = () => action($('set-reset-time'), async () => {
+  const id = selectedDeviceId(), format = $('reset-time-format').value;
+  await api(`/api/devices/${encodeURIComponent(id)}/reset-time`, { format });
+  state.deviceInfos[id] = { ...state.deviceInfos[id], reset_time_format: format };
+}, '重置时间显示方式已写入设备，重启后保留。');
 $('pet-device').onchange = () => { state.deviceTargetId = $('pet-device').value; renderDeviceTargets(); };
 $('set-display').onclick = () => action($('set-display'), async () => {
   const id = selectedDeviceId(), mode = $('display-mode').value;

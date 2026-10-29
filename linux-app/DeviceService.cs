@@ -43,6 +43,11 @@ public sealed class DeviceService(SettingsStore settings, HttpClient http)
         return Post(id, "api/display", new() { ["mode"] = mode }, ct);
     }
     public Task Brightness(int level, CancellationToken ct) => Brightness(null, level, ct);
+    public Task ResetTimeFormat(string? id, string format, CancellationToken ct)
+    {
+        if (format is not ("countdown" or "datetime")) throw new BridgeException("重置时间格式不支持。");
+        return Post(id, "api/reset-time", new() { ["format"] = format }, ct);
+    }
     public Task Brightness(string? id, int level, CancellationToken ct)
     {
         if (level is < 0 or > 100) throw new BridgeException("亮度必须在 0～100 之间。");

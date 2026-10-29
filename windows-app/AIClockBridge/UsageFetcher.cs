@@ -15,12 +15,16 @@ namespace AIClockBridge;
 class ProviderUsage
 {
     public double? PrimaryPct;     // 5h window used %
-    public int? PrimaryResetMin;   // minutes until it resets
+    public double? PrimaryResetAt; // fixed Unix deadline, also retained in cache
+    public int? PrimaryResetMin => Remaining(PrimaryResetAt);
     public double? WeeklyPct;      // 7d / weekly window used %
-    public int? WeeklyResetMin;
+    public double? WeeklyResetAt;
+    public int? WeeklyResetMin => Remaining(WeeklyResetAt);
     public string Error;
     public DateTime? FetchedAt;
     public bool RateLimited;
+    static int? Remaining(double? epoch) => epoch.HasValue
+        ? Math.Max(0, (int)((epoch.Value - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0) / 60)) : null;
 }
 
 sealed class UsageFetcher
@@ -113,9 +117,9 @@ sealed class UsageFetcher
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var dict = new Dictionary<string, double> { ["at"] = now };
         if (u.PrimaryPct.HasValue) dict["pPct"] = u.PrimaryPct.Value;
-        if (u.PrimaryResetMin.HasValue) dict["pResetAt"] = now + u.PrimaryResetMin.Value * 60.0;
+        if (u.PrimaryResetAt.HasValue) dict["pResetAt"] = u.PrimaryResetAt.Value;
         if (u.WeeklyPct.HasValue) dict["wPct"] = u.WeeklyPct.Value;
-        if (u.WeeklyResetMin.HasValue) dict["wResetAt"] = now + u.WeeklyResetMin.Value * 60.0;
+        if (u.WeeklyResetAt.HasValue) dict["wResetAt"] = u.WeeklyResetAt.Value;
         try { Settings.Set(key, JsonSerializer.Serialize(dict)); }
         catch { /* best effort */ }
     }
@@ -135,8 +139,8 @@ sealed class UsageFetcher
             if (dict.TryGetValue("pPct", out var pp)) u.PrimaryPct = pp;
             if (dict.TryGetValue("wPct", out var wp)) u.WeeklyPct = wp;
             if (u.PrimaryPct == null && u.WeeklyPct == null) return null;
-            if (dict.TryGetValue("pResetAt", out var pr)) u.PrimaryResetMin = Math.Max(0, (int)((pr - now) / 60));
-            if (dict.TryGetValue("wResetAt", out var wr)) u.WeeklyResetMin = Math.Max(0, (int)((wr - now) / 60));
+            if (dict.TryGetValue("pResetAt", out var pr)) u.PrimaryResetAt = pr;
+            if (dict.TryGetValue("wResetAt", out var wr)) u.WeeklyResetAt = wr;
             u.FetchedAt = DateTimeOffset.FromUnixTimeSeconds((long)at).UtcDateTime;
             return u;
         }
@@ -145,14 +149,14 @@ sealed class UsageFetcher
 
     static ProviderUsage Merge(ProviderUsage old, ProviderUsage fresh)
     {
-        if (fresh.PrimaryPct == null && fresh.WeeklyPct == null && old.PrimaryPct != null)
+        if (fresh.PrimaryPct == null && fresh.WeeklyPct == null && (old.PrimaryPct != null || old.WeeklyPct != null))
         {
             return new ProviderUsage
             {
                 PrimaryPct = old.PrimaryPct,
-                PrimaryResetMin = old.PrimaryResetMin,
+                PrimaryResetAt = old.PrimaryResetAt,
                 WeeklyPct = old.WeeklyPct,
-                WeeklyResetMin = old.WeeklyResetMin,
+                WeeklyResetAt = old.WeeklyResetAt,
                 FetchedAt = old.FetchedAt,
                 Error = fresh.Error,
             };
@@ -202,16 +206,15 @@ sealed class UsageFetcher
         try
         {
             using var doc = JsonDocument.Parse(body);
-            var now = DateTimeOffset.UtcNow;
             if (doc.RootElement.TryGetProperty("five_hour", out var fiveHour))
             {
                 usage.PrimaryPct = NumberOrNull(fiveHour, "utilization");
-                usage.PrimaryResetMin = MinutesUntil(StringOrNull(fiveHour, "resets_at"), now);
+                usage.PrimaryResetAt = ResetEpoch(StringOrNull(fiveHour, "resets_at"));
             }
             if (doc.RootElement.TryGetProperty("seven_day", out var sevenDay))
             {
                 usage.WeeklyPct = NumberOrNull(sevenDay, "utilization");
-                usage.WeeklyResetMin = MinutesUntil(StringOrNull(sevenDay, "resets_at"), now);
+                usage.WeeklyResetAt = ResetEpoch(StringOrNull(sevenDay, "resets_at"));
             }
             usage.FetchedAt = DateTime.UtcNow;
         }
@@ -296,29 +299,26 @@ sealed class UsageFetcher
             // Codex dropped the 5h window (2026-07): primary_window now carries
             // the weekly (604800s) limit and secondary_window is null. Classify
             // each window by its advertised length instead of trusting the slot.
-            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
             foreach (var (slot, fallbackSec) in new[]
                      { ("primary_window", 5.0 * 3600), ("secondary_window", 7.0 * 86400) })
             {
                 if (!rateLimit.TryGetProperty(slot, out var w)
                     || w.ValueKind != JsonValueKind.Object) continue;
                 var pct = NumberOrNull(w, "used_percent");
-                int? resetMin = null;
                 var reset = NumberOrNull(w, "reset_at");
-                if (reset.HasValue) resetMin = Math.Max(0, (int)((reset.Value - now) / 60));
                 var windowSec = NumberOrNull(w, "limit_window_seconds") ?? fallbackSec;
                 if (windowSec >= 2 * 86400)
                 {
                     if (!usage.WeeklyPct.HasValue)
                     {
                         usage.WeeklyPct = pct;
-                        usage.WeeklyResetMin = resetMin;
+                        usage.WeeklyResetAt = reset;
                     }
                 }
                 else if (!usage.PrimaryPct.HasValue)
                 {
                     usage.PrimaryPct = pct;
-                    usage.PrimaryResetMin = resetMin;
+                    usage.PrimaryResetAt = reset;
                 }
             }
             usage.FetchedAt = DateTime.UtcNow;
@@ -397,11 +397,11 @@ sealed class UsageFetcher
         return null;
     }
 
-    static int? MinutesUntil(string iso, DateTimeOffset now)
+    static double? ResetEpoch(string iso)
     {
         if (iso == null) return null;
         if (!DateTimeOffset.TryParse(iso, null, System.Globalization.DateTimeStyles.RoundtripKind, out var d))
             return null;
-        return Math.Max(0, (int)((d - now).TotalMinutes));
+        return d.ToUnixTimeMilliseconds() / 1000.0;
     }
 }

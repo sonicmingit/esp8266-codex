@@ -24,6 +24,7 @@ sealed class TrayAppContext : ApplicationContext
     readonly ToolStripMenuItem _networkMenu = new("绑定网卡");
     readonly ToolStripMenuItem _usbWifiOffItem = new("USB 直连时关闭设备 Wi-Fi");
     readonly Dictionary<string, ToolStripMenuItem> _modeItems = new();
+    readonly Dictionary<string, ToolStripMenuItem> _resetTimeItems = new();
 
     public TrayAppContext(StatusService service, UsageFetcher usage, NetSpeedMonitor netMonitor,
                           NowPlayingMonitor nowPlaying, StockMonitor stockMonitor, int port,
@@ -101,6 +102,23 @@ sealed class TrayAppContext : ApplicationContext
             displayMenu.DropDownItems.Add(item);
         }
         _menu.Items.Add(displayMenu);
+        var resetTimeMenu = new ToolStripMenuItem("重置时间显示（重启保持）");
+        foreach (var (title, format) in new[] { ("倒计时", "countdown"), ("具体日期时间", "datetime") })
+        {
+            var item = new ToolStripMenuItem(title);
+            item.Click += async (_, _) =>
+            {
+                try
+                {
+                    await DeviceClient.SetResetTimeFormat(format);
+                    await RefreshDeviceSection();
+                }
+                catch (Exception e) { Toast("设置失败", e.Message); }
+            };
+            _resetTimeItems[format] = item;
+            resetTimeMenu.DropDownItems.Add(item);
+        }
+        _menu.Items.Add(resetTimeMenu);
         _usbWifiOffItem.CheckOnClick = false;
         _usbWifiOffItem.Click += async (_, _) => await SetUsbWifiOff(!_usbWifiOffItem.Checked);
         _menu.Items.Add(_usbWifiOffItem);
@@ -272,6 +290,7 @@ sealed class TrayAppContext : ApplicationContext
         {
             _deviceInfoItem.Text = "设备：未设置地址";
             foreach (var item in _modeItems.Values) item.Checked = false;
+            foreach (var item in _resetTimeItems.Values) item.Checked = false;
             _usbWifiOffItem.Checked = false;
             return;
         }
@@ -287,6 +306,7 @@ sealed class TrayAppContext : ApplicationContext
         {
             _deviceInfoItem.Text = $"设备：{host}（无法连接）";
             foreach (var item in _modeItems.Values) item.Checked = false;
+            foreach (var item in _resetTimeItems.Values) item.Checked = false;
             _usbWifiOffItem.Checked = false;
             // self-heal: the device may have moved to a new DHCP address;
             // if it recently polled us from a different IP, adopt that.
@@ -313,6 +333,7 @@ sealed class TrayAppContext : ApplicationContext
             ? $"设备：{transport} · 正在显示 {showing} · 有线优先"
             : $"设备：{transport} · 正在显示 {showing} · {string.Join(" ", sprites)}";
         foreach (var (mode, item) in _modeItems) item.Checked = mode == info.Mode;
+        foreach (var (format, item) in _resetTimeItems) item.Checked = format == info.ResetTimeFormat;
         _usbWifiOffItem.Checked = info.UsbWifiOff;
     }
 

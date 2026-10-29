@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RollForward>Major</RollForward>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../AIClockBridge/UsageFetcher.cs" Link="UsageFetcher.cs" />
+    <Compile Include="../AIClockBridge/Settings.cs" Link="Settings.cs" />
+  </ItemGroup>
+</Project>

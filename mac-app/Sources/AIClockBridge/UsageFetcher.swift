@@ -12,9 +12,11 @@ import Foundation
 
 struct ProviderUsage {
     var primaryPct: Double?     // 5h window used %
-    var primaryResetMin: Int?   // minutes until it resets
+    var primaryResetAt: TimeInterval?
+    var primaryResetMin: Int? { primaryResetAt.map { max(0, Int(($0 - Date().timeIntervalSince1970) / 60)) } }
     var weeklyPct: Double?      // 7d / weekly window used %
-    var weeklyResetMin: Int?
+    var weeklyResetAt: TimeInterval?
+    var weeklyResetMin: Int? { weeklyResetAt.map { max(0, Int(($0 - Date().timeIntervalSince1970) / 60)) } }
     var error: String?
     var fetchedAt: Date?
     var rateLimited = false
@@ -95,9 +97,9 @@ final class UsageFetcher {
         let now = Date().timeIntervalSince1970
         var dict: [String: Any] = ["at": now]
         if let p = u.primaryPct { dict["pPct"] = p }
-        if let r = u.primaryResetMin { dict["pResetAt"] = now + Double(r) * 60 }
+        if let r = u.primaryResetAt { dict["pResetAt"] = r }
         if let w = u.weeklyPct { dict["wPct"] = w }
-        if let r = u.weeklyResetMin { dict["wResetAt"] = now + Double(r) * 60 }
+        if let r = u.weeklyResetAt { dict["wResetAt"] = r }
         if let data = try? JSONSerialization.data(withJSONObject: dict) {
             UserDefaults.standard.set(data, forKey: key)
         }
@@ -113,14 +115,14 @@ final class UsageFetcher {
         u.primaryPct = (dict["pPct"] as? NSNumber)?.doubleValue
         u.weeklyPct = (dict["wPct"] as? NSNumber)?.doubleValue
         guard u.primaryPct != nil || u.weeklyPct != nil else { return nil }
-        if let r = (dict["pResetAt"] as? NSNumber)?.doubleValue { u.primaryResetMin = max(0, Int((r - now) / 60)) }
-        if let r = (dict["wResetAt"] as? NSNumber)?.doubleValue { u.weeklyResetMin = max(0, Int((r - now) / 60)) }
+        u.primaryResetAt = (dict["pResetAt"] as? NSNumber)?.doubleValue
+        u.weeklyResetAt = (dict["wResetAt"] as? NSNumber)?.doubleValue
         u.fetchedAt = Date(timeIntervalSince1970: at)
         return u
     }
 
     private static func merge(old: ProviderUsage, new: ProviderUsage) -> ProviderUsage {
-        if new.primaryPct == nil && new.weeklyPct == nil && old.primaryPct != nil {
+        if new.primaryPct == nil && new.weeklyPct == nil && (old.primaryPct != nil || old.weeklyPct != nil) {
             var kept = old
             kept.error = new.error
             return kept
@@ -160,14 +162,13 @@ final class UsageFetcher {
             usage.error = "Claude 用量响应解析失败"
             return usage
         }
-        let now = Date().timeIntervalSince1970
         if let w = obj["five_hour"] as? [String: Any] {
             usage.primaryPct = (w["utilization"] as? NSNumber)?.doubleValue
-            usage.primaryResetMin = Self.minutesUntil(iso: w["resets_at"] as? String, now: now)
+            usage.primaryResetAt = Self.resetEpoch(iso: w["resets_at"] as? String)
         }
         if let w = obj["seven_day"] as? [String: Any] {
             usage.weeklyPct = (w["utilization"] as? NSNumber)?.doubleValue
-            usage.weeklyResetMin = Self.minutesUntil(iso: w["resets_at"] as? String, now: now)
+            usage.weeklyResetAt = Self.resetEpoch(iso: w["resets_at"] as? String)
         }
         usage.fetchedAt = Date()
         return usage
@@ -237,23 +238,19 @@ final class UsageFetcher {
         // the weekly (604800s) limit and secondary_window is null. Classify
         // each window by its advertised length instead of trusting the slot,
         // so both the old (5h+weekly) and new (weekly-only) shapes map right.
-        let now = Date().timeIntervalSince1970
         for (key, fallbackSec) in [("primary_window", 5.0 * 3600), ("secondary_window", 7.0 * 86400)] {
             guard let w = rateLimit[key] as? [String: Any] else { continue }
             let pct = (w["used_percent"] as? NSNumber)?.doubleValue
-            var resetMin: Int?
-            if let reset = (w["reset_at"] as? NSNumber)?.doubleValue {
-                resetMin = max(0, Int((reset - now) / 60))
-            }
+            let reset = (w["reset_at"] as? NSNumber)?.doubleValue
             let windowSec = (w["limit_window_seconds"] as? NSNumber)?.doubleValue ?? fallbackSec
             if windowSec >= 2 * 86400 {
                 if usage.weeklyPct == nil {
                     usage.weeklyPct = pct
-                    usage.weeklyResetMin = resetMin
+                    usage.weeklyResetAt = reset
                 }
             } else if usage.primaryPct == nil {
                 usage.primaryPct = pct
-                usage.primaryResetMin = resetMin
+                usage.primaryResetAt = reset
             }
         }
         usage.fetchedAt = Date()
@@ -291,7 +288,7 @@ final class UsageFetcher {
 
     // MARK: - helpers
 
-    private static func minutesUntil(iso: String?, now: Double) -> Int? {
+    private static func resetEpoch(iso: String?) -> TimeInterval? {
         guard let iso = iso else { return nil }
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -301,7 +298,7 @@ final class UsageFetcher {
             date = f.date(from: iso)
         }
         guard let d = date else { return nil }
-        return max(0, Int((d.timeIntervalSince1970 - now) / 60))
+        return d.timeIntervalSince1970
     }
 
     private static func syncRequest(_ req: URLRequest) -> (data: Data?, code: Int, error: String?) {

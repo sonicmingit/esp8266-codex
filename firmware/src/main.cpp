@@ -15,6 +15,7 @@
 #include <ArduinoJson.h>
 #include <TFT_eSPI.h>
 #include <AnimatedGIF.h>
+#include <time.h>
 
 #include "config.h"
 #include "img/claude_sprite.h"
@@ -87,6 +88,46 @@ enum DisplayMode {
   MODE_DUAL
 };
 DisplayMode displayMode = MODE_AUTO;
+bool resetTimeDateTime = false;
+bool resetTimeFormatDirty = false;
+// Snapshot time, not the device's uptime: works over USB without Wi-Fi/NTP.
+time_t statusEpoch = 0;
+int statusUtcOffsetMin = 0;
+bool statusClockKnown = false;
+
+const char *resetTimeFormatName() { return resetTimeDateTime ? "datetime" : "countdown"; }
+
+bool setResetTimeFormat(String format) {
+  format.trim();
+  if (format != "countdown" && format != "datetime") return false;
+  bool next = format == "datetime";
+  if (next != resetTimeDateTime) resetTimeFormatDirty = true;
+  resetTimeDateTime = next;
+  return true;
+}
+
+void saveResetTimeFormat() {
+  File f = LittleFS.open(RESET_TIME_FORMAT_FILE, "w");
+  if (f) { f.println(resetTimeFormatName()); f.close(); }
+}
+
+void loadResetTimeFormat() {
+  File f = LittleFS.open(RESET_TIME_FORMAT_FILE, "r");
+  if (f) { setResetTimeFormat(f.readStringUntil('\n')); f.close(); }
+}
+
+// Prefer the fixed reset instant; older payloads can fall back to minutes.
+// Never invent a date before both clock and timezone are supplied.
+String resetDateText(int minutes, const char *format, time_t resetAt = 0) {
+  if ((minutes < 0 && resetAt == 0) || !statusClockKnown) return "-";
+  time_t local = (resetAt > 0 ? resetAt : statusEpoch + (time_t)minutes * 60)
+                + (long)statusUtcOffsetMin * 60;
+  struct tm parts;
+  gmtime_r(&local, &parts);
+  char text[24];
+  strftime(text, sizeof(text), format, &parts);
+  return String(text);
+}
 
 const char *displayModeName(DisplayMode m) {
   if (m == MODE_CLAUDE) return "claude";
@@ -208,8 +249,10 @@ struct ClaudeStatus {
   int sessionWindowMin = 300;
   float fiveHourPct = -1; // real OAuth quota from the bridge, -1 = unknown
   int fiveHourResetMin = -1; // minutes until the 5h window resets
+  time_t fiveHourResetAt = 0;
   float sevenDayPct = -1;
   int sevenDayResetMin = -1; // minutes until the 7-day window resets
+  time_t sevenDayResetAt = 0;
   bool needsInput = false; // waiting on a permission/approval prompt
 };
 
@@ -218,8 +261,11 @@ struct CodexStatus {
   long tokensToday = 0;
   float primaryPct = -1;
   int primaryResetMin = -1;
+  time_t primaryResetAt = 0;
+  int primaryWindowMin = 300;
   float weeklyPct = -1;
   int weeklyResetMin = -1;
+  time_t weeklyResetAt = 0;
   bool needsInput = false;
 };
 
@@ -683,6 +729,10 @@ struct TinyGlyph {
 };
 
 const TinyGlyph tinyGlyphs[] = {
+    {'5', {0b111, 0b100, 0b110, 0b001, 0b110}},
+    {'H', {0b101, 0b101, 0b111, 0b101, 0b101}},
+    {'W', {0b101, 0b101, 0b101, 0b111, 0b101}},
+    {'K', {0b101, 0b101, 0b110, 0b101, 0b101}},
     {'R', {0b110, 0b101, 0b110, 0b101, 0b101}},
     {'E', {0b111, 0b100, 0b110, 0b100, 0b111}},
     {'S', {0b011, 0b100, 0b010, 0b001, 0b110}},
@@ -751,19 +801,36 @@ void drawQuotaText(float hourPct, float weekPct, bool force) {
 enum CdType { CD_NONE, CD_5H, CD_WEEK };
 
 float currentHourPct() {
-  return currentApp == APP_CLAUDE ? claudeStatus.fiveHourPct : codexStatus.primaryPct;
+  return currentApp == APP_CLAUDE ? claudeStatus.fiveHourPct
+                                : (codexStatus.primaryWindowMin < 1440 ? codexStatus.primaryPct : -1);
 }
 
 int currentHourResetMin() {
-  return currentApp == APP_CLAUDE ? claudeStatus.fiveHourResetMin : codexStatus.primaryResetMin;
+  return currentApp == APP_CLAUDE ? claudeStatus.fiveHourResetMin
+                                : (codexStatus.primaryWindowMin < 1440 ? codexStatus.primaryResetMin : -1);
 }
 
 float currentWeekPct() {
-  return currentApp == APP_CLAUDE ? claudeStatus.sevenDayPct : codexStatus.weeklyPct;
+  if (currentApp == APP_CLAUDE) return claudeStatus.sevenDayPct;
+  return codexStatus.weeklyPct >= 0 ? codexStatus.weeklyPct
+                                  : (codexStatus.primaryWindowMin >= 1440 ? codexStatus.primaryPct : -1);
 }
 
 int currentWeekResetMin() {
-  return currentApp == APP_CLAUDE ? claudeStatus.sevenDayResetMin : codexStatus.weeklyResetMin;
+  if (currentApp == APP_CLAUDE) return claudeStatus.sevenDayResetMin;
+  return codexStatus.weeklyPct >= 0 ? codexStatus.weeklyResetMin
+                                  : (codexStatus.primaryWindowMin >= 1440 ? codexStatus.primaryResetMin : -1);
+}
+
+time_t currentHourResetAt() {
+  return currentApp == APP_CLAUDE ? claudeStatus.fiveHourResetAt
+      : (codexStatus.primaryWindowMin < 1440 ? codexStatus.primaryResetAt : 0);
+}
+
+time_t currentWeekResetAt() {
+  if (currentApp == APP_CLAUDE) return claudeStatus.sevenDayResetAt;
+  return codexStatus.weeklyPct >= 0 ? codexStatus.weeklyResetAt
+      : (codexStatus.primaryWindowMin >= 1440 ? codexStatus.primaryResetAt : 0);
 }
 
 CdType desiredCountdown() {
@@ -800,6 +867,19 @@ void syncCountdownDeadline() {
 }
 
 void drawCountdown(bool force) {
+  if (resetTimeDateTime) {
+    int minutes = showingCd == CD_WEEK ? currentWeekResetMin() : currentHourResetMin();
+    time_t at = showingCd == CD_WEEK ? currentWeekResetAt() : currentHourResetAt();
+    String date = resetDateText(minutes, "%m/%d", at), clock = resetDateText(minutes, "%H:%M", at);
+    String value = date + " " + clock;
+    if (!force && value == lastCountdown) return;
+    tft.fillRect(SCREEN_CX - 99, 66, 198, 84, TFT_BLACK);
+    drawDotTextC(showingCd == CD_WEEK ? "Wk RESET AT" : "5h RESET AT", SCREEN_CX, 72, 2, 0, TFT_LIGHTGREY);
+    drawDotTextC(date, SCREEN_CX, 93, 3, 1, TFT_ORANGE);
+    drawDotTextC(clock, SCREEN_CX, 120, 4, 1, TFT_ORANGE);
+    lastCountdown = value;
+    return;
+  }
   long remain = cdDeadlineMs ? (long)(cdDeadlineMs - millis()) / 1000
                              : (long)(showingCd == CD_WEEK ? currentWeekResetMin() : currentHourResetMin()) * 60;
   if (remain < 0) remain = 0;
@@ -852,12 +932,8 @@ void drawAppLogo() {
   }
 }
 
-// Days until the weekly window resets, top-right corner inside the ring
-// (mirrors the app logo top-left). Weekly only - the 5h window is too short
-// for a day count to say anything. Under a day it degrades to hours.
-// The x extent (166..225) stays clear of both the ring (>=226) and the
-// sprite (x<=180 but only from y=60 down); the value must end above y=60.
-const int RESET_CX = 198, RESET_LABEL_Y = 18, RESET_VALUE_Y = 33;
+// Two reset readouts above the sprite (starts at y=60), inside the ring.
+const int RESET_HOUR_CX = 116, RESET_CX = 194, RESET_LABEL_Y = 18, RESET_VALUE_Y = 33;
 String lastResetDays;
 
 String resetDaysText(int min) {
@@ -867,15 +943,31 @@ String resetDaysText(int min) {
 }
 
 void drawResetDays(bool force) {
-  String t = resetDaysText(currentWeekResetMin());
+  int hour = currentHourResetMin(), week = currentWeekResetMin();
+  String h = resetTimeDateTime ? resetDateText(hour, "%m/%d %H:%M", currentHourResetAt())
+                              : (hour < 0 ? String("-") : hour >= 1440 ? resetDaysText(hour)
+                                 : String(hour / 60) + "h" + String(hour % 60) + "m");
+  String w = resetTimeDateTime ? resetDateText(week, "%m/%d %H:%M", currentWeekResetAt()) : resetDaysText(week);
+  bool shortWindow = currentApp == APP_CLAUDE || codexStatus.primaryWindowMin < 1440;
+  String t = String(shortWindow ? "two|" : "one|") + h + "|" + w;
   if (!force && t == lastResetDays) return;
   lastResetDays = t;
-  tft.fillRect(RESET_CX - 32, RESET_LABEL_Y, 60, RESET_VALUE_Y + 27 - RESET_LABEL_Y, TFT_BLACK);
-  if (t.length() == 0) return;
-  drawTinyBoldText("RESET", RESET_CX, RESET_LABEL_Y, TFT_LIGHTGREY);
-  // 2 chars ("3d") get big 3px dots; 3 chars ("18h") drop a size to fit.
-  int pitch = t.length() <= 2 ? 4 : 3;
-  drawDotTextC(t, RESET_CX, RESET_VALUE_Y, pitch, 1, TFT_WHITE);
+  tft.fillRect(80, RESET_LABEL_Y, 146, 42, TFT_BLACK);
+  for (int i = 0; i < 2; ++i) {
+    if (i == 0 && !shortWindow) continue;
+    int cx = i == 0 ? RESET_HOUR_CX : RESET_CX;
+    int minutes = i == 0 ? hour : week;
+    time_t at = i == 0 ? currentHourResetAt() : currentWeekResetAt();
+    drawTinyBoldText(i == 0 ? "5H RESET" : "WK RESET", cx, RESET_LABEL_Y, TFT_LIGHTGREY);
+    if (resetTimeDateTime) {
+      drawDotTextC(resetDateText(minutes, "%m/%d", at), cx, 30, 2, 0, TFT_WHITE);
+      drawDotTextC(resetDateText(minutes, "%H:%M", at), cx, 46, 2, 0, TFT_WHITE);
+    } else {
+      String value = i == 0 ? h : (w.length() ? w : String("-"));
+      int pitch = dotTextWidth(value, 3, 1) <= 64 ? 3 : 2;
+      drawDotTextC(value, cx, RESET_VALUE_Y, pitch, pitch == 3 ? 1 : 0, TFT_WHITE);
+    }
+  }
 }
 
 // Codex's ring percentage: the 5h window when it exists, otherwise the
@@ -934,7 +1026,8 @@ const int DIV_Y = 141;
 const int TITLE2_Y = 145, CARD3_Y = 171;
 
 // "45m" / "2h 19m" / "2d 15h", or "-" when the bridge has no value
-String resetText(int minutes) {
+String resetText(int minutes, time_t at = 0) {
+  if (resetTimeDateTime) return resetDateText(minutes, "%m/%d\n%H:%M", at);
   if (minutes < 0) return "-";
   if (minutes < 60) return String(minutes) + "m";
   if (minutes < 1440) return String(minutes / 60) + "h " + String(minutes % 60) + "m";
@@ -994,9 +1087,13 @@ void drawCardSmall(int cardY, const char *label, const String &time, String &cac
   if (force) tft.drawString(label, K_LAB_X, cardY + K_LAB_Y);
   if (force || time != cache) {
     cache = time;
-    tft.fillRect(K_TIME_R - 58, cardY + K_LAB_Y, 58, 15, C_CARD);
+    tft.fillRect(K_TIME_R - 58, cardY + 4, 58, 32, C_CARD);
     tft.setTextDatum(TR_DATUM);
-    tft.drawString(time, K_TIME_R, cardY + K_LAB_Y);
+    int split = time.indexOf('\n');
+    if (split >= 0) {
+      tft.drawString(time.substring(0, split), K_TIME_R, cardY + 4);
+      tft.drawString(time.substring(split + 1), K_TIME_R, cardY + 20);
+    } else tft.drawString(time, K_TIME_R, cardY + K_LAB_Y);
     tft.setTextDatum(TL_DATUM);
   }
 }
@@ -1023,9 +1120,9 @@ void drawDualQuota(bool force) {
   String n5 = pctText(claudeStatus.fiveHourPct);
   String nw = pctText(claudeStatus.sevenDayPct);
   String nx = pctText(codexStatus.primaryPct);
-  String t5 = resetText(claudeStatus.fiveHourResetMin);
-  String tw = resetText(claudeStatus.sevenDayResetMin);
-  String tx = resetText(codexStatus.primaryResetMin);
+  String t5 = resetText(claudeStatus.fiveHourResetMin, claudeStatus.fiveHourResetAt);
+  String tw = resetText(claudeStatus.sevenDayResetMin, claudeStatus.sevenDayResetAt);
+  String tx = resetText(codexStatus.primaryResetMin, codexStatus.primaryResetAt);
   bool wc = appWorking(true), wx = appWorking(false);
 
   if (!force && n5 == cacheClaude.n1 && nw == cacheClaude.n2 && nx == cacheCodex.n1 &&
@@ -1109,7 +1206,7 @@ void drawActiveApp() {
   } else {
     drawSquareRing(codexRingPct(), currentStatusColor());
     if (showingCd == CD_NONE) drawCodexSprite(codexFrame);
-    drawQuotaText(codexStatus.primaryPct, codexStatus.weeklyPct, true);
+    drawQuotaText(currentHourPct(), currentWeekPct(), true);
   }
   if (showingCd != CD_NONE) drawCountdown(true);
   drawAppLogo();
@@ -1128,7 +1225,7 @@ void refreshActiveApp() {
     drawQuotaText(claudeRingPct(), claudeStatus.sevenDayPct, false);
   } else {
     drawSquareRing(codexRingPct(), currentStatusColor());
-    drawQuotaText(codexStatus.primaryPct, codexStatus.weeklyPct, false);
+    drawQuotaText(currentHourPct(), currentWeekPct(), false);
   }
   drawResetDays(false);
   if (showingCd != CD_NONE) {
@@ -1775,6 +1872,10 @@ bool parseStatusJson(const String &payload) {
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, payload);
   if (err) return false;
+  statusEpoch = doc["ts"] | (long)0;
+  statusUtcOffsetMin = doc["utc_offset_min"] | 0;
+  statusClockKnown = statusEpoch >= 1577836800 && doc["utc_offset_min"].is<int>() &&
+                     statusUtcOffsetMin >= -720 && statusUtcOffsetMin <= 840;
 
   JsonObject c = doc["claude"];
   if (!c.isNull()) {
@@ -1784,8 +1885,10 @@ bool parseStatusJson(const String &payload) {
     claudeStatus.sessionWindowMin = c["session_window_min"] | 300;
     claudeStatus.fiveHourPct = c["five_hour_pct"] | -1.0;
     claudeStatus.fiveHourResetMin = c["five_hour_reset_min"] | -1;
+    claudeStatus.fiveHourResetAt = (time_t)(c["five_hour_reset_at"] | 0.0);
     claudeStatus.sevenDayPct = c["seven_day_pct"] | -1.0;
     claudeStatus.sevenDayResetMin = c["seven_day_reset_min"] | -1;
+    claudeStatus.sevenDayResetAt = (time_t)(c["seven_day_reset_at"] | 0.0);
     claudeStatus.needsInput = c["needs_input"] | false;
   }
 
@@ -1795,8 +1898,11 @@ bool parseStatusJson(const String &payload) {
     codexStatus.tokensToday = x["tokens_today"] | 0;
     codexStatus.primaryPct = x["primary_pct"] | -1.0;
     codexStatus.primaryResetMin = x["primary_reset_min"] | -1;
+    codexStatus.primaryResetAt = (time_t)(x["primary_reset_at"] | 0.0);
+    codexStatus.primaryWindowMin = x["primary_window_min"] | 300;
     codexStatus.weeklyPct = x["weekly_pct"] | -1.0;
     codexStatus.weeklyResetMin = x["weekly_reset_min"] | -1;
+    codexStatus.weeklyResetAt = (time_t)(x["weekly_reset_at"] | 0.0);
     codexStatus.needsInput = x["needs_input"] | false;
   }
   statusMusicPlaying = doc["music_playing"] | false;
@@ -1895,8 +2001,8 @@ void handleSerialFrame(char *line) {
   lastSerialFrameMs = millis();
   wiredEverLinked = true;
   if (!strncmp(line, "#HELLO", 6)) {
-    Serial.printf("#DEVICE {\"name\":\"aiclock\",\"fw\":\"%s\",\"usb_wifi_off\":%s}\n",
-                  FW_VERSION, usbWifiOffWhenWired ? "true" : "false");
+    Serial.printf("#DEVICE {\"name\":\"aiclock\",\"fw\":\"%s\",\"usb_wifi_off\":%s,\"reset_time_format\":\"%s\"}\n",
+                  FW_VERSION, usbWifiOffWhenWired ? "true" : "false", resetTimeFormatName());
     disableWifiForWiredLink();
     return;
   }
@@ -1932,6 +2038,8 @@ void handleSerialFrame(char *line) {
       saveBrightness();
     }
     const char *mode = doc["display"] | (const char *)nullptr;
+    const char *resetFormat = doc["reset_time_format"] | (const char *)nullptr;
+    if (resetFormat && setResetTimeFormat(String(resetFormat))) saveResetTimeFormat();
     if (mode) {
       if (setDisplayModeByName(String(mode))) saveDisplayMode();
       // the effectiveMode transition handler in loop() repaints the chrome
@@ -1999,6 +2107,13 @@ void handleRoot() {
   html += "<button type='submit'>保存</button>";
   html += "</form>";
 
+  html += "<h2 style='font-size:16px;margin-top:28px'>额度重置时间</h2>";
+  html += "<form method='POST' action='/api/reset-time'><select name='format'>";
+  html += String("<option value='countdown'") + (!resetTimeDateTime ? " selected" : "") + ">倒计时</option>";
+  html += String("<option value='datetime'") + (resetTimeDateTime ? " selected" : "") + ">具体日期时间</option></select>";
+  html += "<input type='hidden' name='redirect' value='1'><button type='submit'>保存显示方式</button></form>";
+  html += "<p style='font-size:13px;color:#555'>同时应用于 5 小时、周额度和用满后的重置提示，重启保留。日期时间跟随桥接端本地时区；旧版桥接未提供时区时显示 -。</p>";
+
   // Backlight brightness slider: applies live on release (PWM, persisted).
   html += "<h2 style='font-size:16px;margin-top:28px'>屏幕亮度</h2>";
   html += "<input type='range' min='0' max='100' value='" + String(brightness) + "' id='bri' "
@@ -2062,6 +2177,7 @@ void handleApiInfo() {
   doc["ssid"] = WiFi.SSID();
   doc["bridge"] = bridgeHost;
   doc["mode"] = displayModeName(displayMode);           // configured mode
+  doc["reset_time_format"] = resetTimeFormatName();
   doc["effective"] = displayModeName(effectiveMode());   // what's on screen now
   doc["music_playing"] = statusMusicPlaying;
   doc["showing"] = (currentApp == APP_CLAUDE) ? "claude" : "codex";
@@ -2110,6 +2226,18 @@ void handleApiDisplay() {
     drawActiveApp(); // unconditional: also repaints over a previous net chart
   }
   webServer.send(200, "text/plain", "ok");
+}
+
+void handleApiResetTime() {
+  if (!setResetTimeFormat(webServer.arg("format"))) {
+    webServer.send(400, "text/plain", "format must be countdown|datetime");
+    return;
+  }
+  saveResetTimeFormat();
+  if (webServer.arg("redirect") == "1") {
+    webServer.sendHeader("Location", "/");
+    webServer.send(303);
+  } else webServer.send(200, "text/plain", "ok");
 }
 
 void handleApiUsbWifi() {
@@ -2442,6 +2570,7 @@ void setupWebServer() {
   webServer.on("/reset-wifi", HTTP_POST, handleResetWifi);
   webServer.on("/api/info", HTTP_GET, handleApiInfo);
   webServer.on("/api/display", HTTP_POST, handleApiDisplay);
+  webServer.on("/api/reset-time", HTTP_POST, handleApiResetTime);
   webServer.on("/api/usb-wifi", HTTP_POST, handleApiUsbWifi);
   webServer.on("/api/bridge", HTTP_POST, handleApiBridge);
   webServer.on("/api/brightness", HTTP_POST, handleApiBrightness);
@@ -2468,6 +2597,7 @@ void setup() {
   loadBridgeHost();
   loadBrightness();
   loadDisplayMode();
+  loadResetTimeFormat();
   loadUsbWifiOffWhenWired();
   loadCustomSpriteState();
 
@@ -2521,6 +2651,11 @@ void loop() {
   // audio plays). On a transition, reset the incoming mode's chrome so it
   // repaints cleanly, and repaint the pet immediately when returning to it.
   DisplayMode eff = effectiveMode();
+  if (resetTimeFormatDirty) {
+    resetTimeFormatDirty = false;
+    if (eff == MODE_DUAL) drawDualQuota(true);
+    else if (eff != MODE_NET && eff != MODE_MUSIC && eff != MODE_STOCK) drawActiveApp();
+  }
   if (eff != lastEffectiveMode) {
     lastEffectiveMode = eff;
     if (eff == MODE_NET) {

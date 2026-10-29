@@ -188,13 +188,16 @@ public sealed class QuotaService : BackgroundService
         return new
         {
             ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds(), music_playing = false,
+            utc_offset_min = (int)TimeZoneInfo.Local.GetUtcOffset(DateTimeOffset.UtcNow).TotalMinutes,
             claude = new { status = c.Enabled && c.FetchedAt != null && !c.Stale ? "idle" : "offline", tokens_today = 0,
                 session_min = 0, session_window_min = 300, five_hour_pct = c.Primary?.UsedPercent,
                 five_hour_reset_min = Remaining(c.Primary), seven_day_pct = c.Weekly?.UsedPercent,
+                five_hour_reset_at = c.Primary?.ResetsAt, seven_day_reset_at = c.Weekly?.ResetsAt,
                 seven_day_reset_min = Remaining(c.Weekly), needs_input = false },
             codex = new { status = x.Enabled && x.FetchedAt != null && !x.Stale ? "idle" : "offline", tokens_today = 0,
                 primary_pct = x.Primary?.UsedPercent, primary_window_min = x.Primary?.WindowMinutes,
                 primary_reset_min = Remaining(x.Primary), weekly_pct = x.Weekly?.UsedPercent,
+                primary_reset_at = x.Primary?.ResetsAt, weekly_reset_at = x.Weekly?.ResetsAt,
                 weekly_window_min = x.Weekly?.WindowMinutes, weekly_reset_min = Remaining(x.Weekly), needs_input = false }
         };
     }

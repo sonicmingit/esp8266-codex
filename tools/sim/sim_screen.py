@@ -10,9 +10,11 @@
 改了 main.cpp 里的常量，这里要同步改。
 """
 import freetype
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from PIL import Image, ImageDraw
 
-OTF = "../fonts/Inter-Medium.otf"
+OTF = str(Path(__file__).resolve().parent.parent / "fonts/Inter-Medium.otf")
 W = H = 240
 
 C_WHITE = (255, 251, 247)
@@ -82,7 +84,7 @@ class Screen:
         self.d.rectangle([x, y, x + w - 1, y], fill=c)
 
     def paste_logo(self, path, x, y, size=24):
-        lg = Image.open(path).convert("RGBA").resize((size, size), Image.LANCZOS)
+        lg = Image.open(Path(__file__).resolve().parent / path).convert("RGBA").resize((size, size), Image.LANCZOS)
         self.im.paste(lg, (x, y), lg)
 
     def draw_string(self, s, x, y, px, fg, bg, datum="TL"):
@@ -136,8 +138,16 @@ class Sim:
         self.cc = Cache()
         self.cx = Cache()
 
-    def draw(self, cl, cx, force=False):
+    def draw(self, cl, cx, force=False, reset_format="countdown", epoch=None, utc_offset_min=0):
         s = self.s
+        def reset(m, at=None):
+            if reset_format != "datetime":
+                return reset_text(m)
+            if m is None or m < 0 or epoch is None:
+                return "-"
+            target = at if at is not None else epoch + m * 60
+            return (datetime.fromtimestamp(target, timezone.utc)
+                    + timedelta(minutes=utc_offset_min)).strftime("%m/%d\n%H:%M")
         if force:
             s.fill_rect(0, 0, W, H, BLACK)
             s.paste_logo("logo24-claude_logo.png", T_LOGO_X, TITLE1_Y)
@@ -149,9 +159,9 @@ class Sim:
 
         self._title(TITLE1_Y, "Claude", cl["status"] == "working", self.cc, force)
         self._title(TITLE2_Y, "Codex", cx["status"] == "working", self.cx, force)
-        self._small(CARD1_Y, "5H", reset_text(cl["r5"]), self.cc, "t1", force)
-        self._small(CARD2_Y, "WK", reset_text(cl["rw"]), self.cc, "t2", force)
-        self._small(CARD3_Y, "WK", reset_text(cx["rw"]), self.cx, "t1", force)
+        self._small(CARD1_Y, "5H", reset(cl["r5"], cl.get("at5")), self.cc, "t1", force)
+        self._small(CARD2_Y, "WK", reset(cl["rw"], cl.get("atw")), self.cc, "t2", force)
+        self._small(CARD3_Y, "WK", reset(cx["rw"], cx.get("atw")), self.cx, "t1", force)
 
         self._big(CARD1_Y, pct_text(cl["p5"]), self.cc, "n1", force)
         self._big(CARD2_Y, pct_text(cl["pw"]), self.cc, "n2", force)
@@ -175,8 +185,13 @@ class Sim:
             self.s.draw_string(label, K_LAB_X, cardY + K_LAB_Y, 13, C_GREY, C_CARD)
         if force or time != getattr(c, field):
             setattr(c, field, time)
-            self.s.fill_rect(K_TIME_R - 58, cardY + K_LAB_Y, 58, 15, C_CARD)
-            self.s.draw_string(time, K_TIME_R, cardY + K_LAB_Y, 13, C_GREY, C_CARD, datum="TR")
+            self.s.fill_rect(K_TIME_R - 58, cardY + 4, 58, 32, C_CARD)
+            if "\n" in time:
+                date, clock = time.split("\n")
+                self.s.draw_string(date, K_TIME_R, cardY + 4, 13, C_GREY, C_CARD, datum="TR")
+                self.s.draw_string(clock, K_TIME_R, cardY + 20, 13, C_GREY, C_CARD, datum="TR")
+            else:
+                self.s.draw_string(time, K_TIME_R, cardY + K_LAB_Y, 13, C_GREY, C_CARD, datum="TR")
 
     def _big(self, cardY, pct, c, field, force):
         if not force and pct == getattr(c, field):

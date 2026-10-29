@@ -28,10 +28,16 @@ sealed class MirrorControl : Control
     public string Line2 = "Weekly -";
     public bool ShowingClaude = true;
     public bool DeviceOK;
+    public bool ResetTimeDateTime;
+    public long StatusEpoch;
+    public int? HourResetMin, WeekResetMin;
+    public double? HourResetAt, WeekResetAt;
+    public bool ShortWindow = true;
     // optional MODE_DUAL mirror: Claude 5h/week and Codex weekly quota at once.
     public bool DualMode;
     public double? DualClaudeFivePct, DualClaudeWeekPct, DualCodexWeekPct;
     public int? DualClaudeFiveResetMin, DualClaudeWeekResetMin, DualCodexWeekResetMin;
+    public double? DualClaudeFiveResetAt, DualClaudeWeekResetAt, DualCodexWeekResetAt;
     public bool DualClaudeWorking, DualCodexWorking;
     // net-mode mirror: same scrolling area-chart model as the firmware —
     // one column per 250ms sample, 224-column (56s) window, shared "nice"
@@ -166,6 +172,23 @@ sealed class MirrorControl : Control
 
         // app logo, top-left inside the ring (firmware draws it at 14,18 @40px)
         g.DrawImage(ShowingClaude ? ClaudeLogo : CodexLogo, new Rectangle(14, 18, 40, 40));
+
+        using (var font = new Font("Consolas", 10, FontStyle.Bold, GraphicsUnit.Pixel))
+        using (var fmt = new StringFormat { Alignment = StringAlignment.Center })
+        {
+            void Reset(int cx, string label, int? minutes, double? at)
+            {
+                g.DrawString(label, font, Brushes.LightGray, new RectangleF(cx - 36, 18, 72, 12), fmt);
+                var value = ResetTimeDateTime ? ResetText(minutes, at)
+                    : minutes is not (>= 0) ? "-"
+                    : label.StartsWith("WK") || minutes >= 1440
+                        ? (minutes < 1440 ? $"{(minutes + 59) / 60}h" : $"{(minutes + 1439) / 1440}d")
+                        : $"{minutes / 60}h{minutes % 60}m";
+                g.DrawString(value, font, Brushes.White, new RectangleF(cx - 36, 32, 72, 28), fmt);
+            }
+            if (ShortWindow) Reset(116, "5H RESET", HourResetMin, HourResetAt);
+            Reset(194, "WK RESET", WeekResetMin, WeekResetAt);
+        }
 
         // quota text
         using (var font = new Font("Consolas", 13, FontStyle.Bold, GraphicsUnit.Pixel))
@@ -365,7 +388,7 @@ sealed class MirrorControl : Control
             g.FillEllipse(active ? workingBrush : trackBrush, 218, y + 8, 8, 8);
         }
 
-        void Card(float y, string label, double? pct, int? reset, Brush accent)
+        void Card(float y, string label, double? pct, int? reset, Brush accent, double? at)
         {
             using var shape = RoundedRect(new RectangleF(8, y, 224, 52), 8);
             g.FillPath(cardBrush, shape);
@@ -373,8 +396,8 @@ sealed class MirrorControl : Control
             var value = pct.HasValue && pct.Value >= 0 ? $"{(int)pct.Value}%" : "-";
             g.DrawString(value, valueFont, whiteBrush, 48, y + 2);
             using var right = new StringFormat { Alignment = StringAlignment.Far };
-            g.DrawString(ResetText(reset), resetFont, greyBrush,
-                         new RectangleF(145, y + 11, 77, 16), right);
+            g.DrawString(ResetText(reset, at), resetFont, greyBrush,
+                         new RectangleF(164, y + (ResetTimeDateTime ? 4 : 11), 58, ResetTimeDateTime ? 32 : 16), right);
             using var rail = RoundedRect(new RectangleF(18, y + 40, 204, 6), 3);
             g.FillPath(trackBrush, rail);
             if (pct.HasValue && pct.Value > 0)
@@ -386,11 +409,11 @@ sealed class MirrorControl : Control
         }
 
         Title(ClaudeLogo, "Claude", 3, DualClaudeWorking);
-        Card(29, "5H", DualClaudeFivePct, DualClaudeFiveResetMin, claudeBrush);
-        Card(85, "WK", DualClaudeWeekPct, DualClaudeWeekResetMin, claudeBrush);
+        Card(29, "5H", DualClaudeFivePct, DualClaudeFiveResetMin, claudeBrush, DualClaudeFiveResetAt);
+        Card(85, "WK", DualClaudeWeekPct, DualClaudeWeekResetMin, claudeBrush, DualClaudeWeekResetAt);
         g.FillRectangle(trackBrush, 8, 141, 224, 1);
         Title(CodexLogo, "Codex", 145, DualCodexWorking);
-        Card(171, "WK", DualCodexWeekPct, DualCodexWeekResetMin, codexBrush);
+        Card(171, "WK", DualCodexWeekPct, DualCodexWeekResetMin, codexBrush, DualCodexWeekResetAt);
 
         if (!DeviceOK || (NeedsInput && FlashOn))
         {
@@ -399,9 +422,12 @@ sealed class MirrorControl : Control
         }
     }
 
-    static string ResetText(int? minutes)
+    string ResetText(int? minutes, double? at = null)
     {
         if (!minutes.HasValue || minutes.Value < 0) return "-";
+        if (ResetTimeDateTime) return DateTimeOffset.FromUnixTimeSeconds(
+            at.HasValue ? (long)at.Value : StatusEpoch + minutes.Value * 60L)
+            .ToLocalTime().ToString("MM/dd\nHH:mm", System.Globalization.CultureInfo.InvariantCulture);
         var value = minutes.Value;
         if (value < 60) return $"{value}m";
         if (value < 1440) return $"{value / 60}h {value % 60}m";
@@ -695,6 +721,8 @@ sealed class MirrorForm : Form
     /// Quota lines & ring exactly as the firmware computes them from /status.
     void ApplyScene(DeviceInfo info)
     {
+        _mirror.ResetTimeDateTime = info.ResetTimeFormat == "datetime";
+        _mirror.StatusEpoch = _service.Snapshot().Ts;
         // mirror what's actually on the device screen (effective), so an
         // AUTO device that auto-switched to music shows music here too
         var enteringNet = info.Effective == "net" && !_mirror.NetMode;
@@ -707,10 +735,13 @@ sealed class MirrorForm : Form
             var dual = _service.Snapshot();
             _mirror.DualClaudeFivePct = dual.Claude.FiveHourPct;
             _mirror.DualClaudeFiveResetMin = dual.Claude.FiveHourResetMin;
+            _mirror.DualClaudeFiveResetAt = dual.Claude.FiveHourResetAt;
             _mirror.DualClaudeWeekPct = dual.Claude.SevenDayPct;
             _mirror.DualClaudeWeekResetMin = dual.Claude.SevenDayResetMin;
+            _mirror.DualClaudeWeekResetAt = dual.Claude.SevenDayResetAt;
             _mirror.DualCodexWeekPct = dual.Codex.PrimaryPct ?? dual.Codex.WeeklyPct;
             _mirror.DualCodexWeekResetMin = dual.Codex.PrimaryResetMin ?? dual.Codex.WeeklyResetMin;
+            _mirror.DualCodexWeekResetAt = dual.Codex.PrimaryResetAt ?? dual.Codex.WeeklyResetAt;
             _mirror.DualClaudeWorking = dual.Claude.Status == "working";
             _mirror.DualCodexWorking = dual.Codex.Status == "working";
             _mirror.NeedsInput = dual.Claude.NeedsInput || dual.Codex.NeedsInput;
@@ -745,6 +776,15 @@ sealed class MirrorForm : Form
         }
         var snap = _service.Snapshot();
         _mirror.ShowingClaude = info.Showing != "codex";
+        _mirror.ShortWindow = _mirror.ShowingClaude || (snap.Codex.PrimaryWindowMin ?? 300) < 1440;
+        _mirror.HourResetMin = _mirror.ShowingClaude ? snap.Claude.FiveHourResetMin : snap.Codex.PrimaryResetMin;
+        _mirror.HourResetAt = _mirror.ShowingClaude ? snap.Claude.FiveHourResetAt : snap.Codex.PrimaryResetAt;
+        _mirror.WeekResetMin = _mirror.ShowingClaude ? snap.Claude.SevenDayResetMin
+            : snap.Codex.WeeklyPct.HasValue ? snap.Codex.WeeklyResetMin
+            : !_mirror.ShortWindow ? snap.Codex.PrimaryResetMin : null;
+        _mirror.WeekResetAt = _mirror.ShowingClaude ? snap.Claude.SevenDayResetAt
+            : snap.Codex.WeeklyPct.HasValue ? snap.Codex.WeeklyResetAt
+            : !_mirror.ShortWindow ? snap.Codex.PrimaryResetAt : null;
         if (_mirror.ShowingClaude)
         {
             var pct = snap.Claude.FiveHourPct
@@ -760,9 +800,9 @@ sealed class MirrorForm : Form
             // Codex may only have a weekly window now (5h limit dropped):
             // ring + single line follow whatever windows actually exist.
             _mirror.RingPct = snap.Codex.PrimaryPct ?? snap.Codex.WeeklyPct ?? 0;
-            if (!snap.Codex.PrimaryPct.HasValue && snap.Codex.WeeklyPct.HasValue)
+            if (!_mirror.ShortWindow || (!snap.Codex.PrimaryPct.HasValue && snap.Codex.WeeklyPct.HasValue))
             {
-                _mirror.Line1 = "Weekly " + PctText(snap.Codex.WeeklyPct);
+                _mirror.Line1 = "Weekly " + PctText(snap.Codex.WeeklyPct ?? snap.Codex.PrimaryPct);
                 _mirror.Line2 = "";
             }
             else

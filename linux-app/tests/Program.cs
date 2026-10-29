@@ -140,7 +140,13 @@ Add("Readonly credentials, cache and firmware protocol", async () =>
     using var service = new QuotaService(s, new HttpClient(handler)); await service.Refresh(true, default);
     var usage = service.Snapshot()["codex"]; Check(!usage.Stale && usage.Weekly?.UsedPercent == 42, "No usage");
     using var status = JsonDocument.Parse(JsonSerializer.Serialize(service.FirmwareStatus()));
+    var epoch = status.RootElement.GetProperty("ts").GetInt64();
+    var offset = status.RootElement.GetProperty("utc_offset_min").GetInt32();
+    Check(DateTimeOffset.FromUnixTimeSeconds(epoch).ToOffset(TimeSpan.FromMinutes(offset)).DateTime
+        == DateTimeOffset.FromUnixTimeSeconds(epoch).LocalDateTime, "Firmware timezone does not match bridge local time");
     Check(status.RootElement.GetProperty("codex").GetProperty("weekly_pct").GetDouble() == 42, "Firmware fields mismatch");
+    Check(status.RootElement.GetProperty("codex").GetProperty("weekly_reset_at").GetInt64() == usage.Weekly!.ResetsAt,
+        "Firmware lost the fixed reset instant");
     Check(status.RootElement.GetProperty("codex").GetProperty("primary_pct").ValueKind == JsonValueKind.Null, "Invented primary window");
     var cache = File.ReadAllText(Path.Combine(s.DataDirectory, "usage-cache.json")); Check(!cache.Contains("fake-access"), "Secret persisted in quota cache");
     using var restart = new QuotaService(s, new HttpClient(new FakeHttp((_, _) => Task.FromResult(FakeHttp.Response(503, "")))));
@@ -324,10 +330,14 @@ Add("Device HTTP upload, pairing, display and validation", async () =>
         calls.Add(request.RequestUri!.AbsolutePath); var body = await request.Content!.ReadAsStringAsync(ct);
         if (request.RequestUri.AbsolutePath == "/sprite/codex") Check(body.Contains("pet.gif") && body.Contains("image/gif"), "No multipart GIF");
         if (request.RequestUri.AbsolutePath == "/api/bridge") Check(body.Contains("192.168.1.20%3A8877"), "Wrong advertised host");
+        if (request.RequestUri.AbsolutePath == "/api/reset-time") Check(body == "format=datetime", "Wrong reset time format");
         return FakeHttp.Response(200, "ok");
     });
     var device = new DeviceService(s, new HttpClient(handler)); await device.Pair(default); await device.Display("dual", default); await device.Brightness(42, default); await device.Upload("codex", Encoding.ASCII.GetBytes("GIF89a"), default); await device.Reset("claude", default);
-    Check(calls.Count == 5, "Missing request"); await ExpectError(() => device.Display("stock", default), "不支持"); await ExpectError(() => device.Brightness(101, default), "亮度");
+    await device.ResetTimeFormat(null, "datetime", default);
+    Check(calls.Count == 6, "Missing request"); await ExpectError(() => device.Display("stock", default), "不支持"); await ExpectError(() => device.Brightness(101, default), "亮度");
+    await ExpectError(() => device.ResetTimeFormat(null, "invalid", default), "不支持");
+    Check(calls.Count == 6, "Invalid format reached device");
 });
 
 var failed = 0;

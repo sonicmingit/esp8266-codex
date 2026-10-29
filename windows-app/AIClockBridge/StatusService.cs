@@ -17,8 +17,10 @@ class ClaudeStatus
     public int SessionWindowMin = 300;
     public double? FiveHourPct;
     public int? FiveHourResetMin;
+    public double? FiveHourResetAt;
     public double? SevenDayPct;
     public int? SevenDayResetMin;
+    public double? SevenDayResetAt;
     public bool NeedsInput; // waiting on a permission/approval prompt
 }
 
@@ -29,9 +31,11 @@ class CodexStatus
     public double? PrimaryPct;
     public int? PrimaryWindowMin;
     public int? PrimaryResetMin;
+    public double? PrimaryResetAt;
     public double? WeeklyPct;
     public int? WeeklyWindowMin;
     public int? WeeklyResetMin;
+    public double? WeeklyResetAt;
     public bool NeedsInput;
 }
 
@@ -50,6 +54,8 @@ class StatusSnapshot
         {
             w.WriteStartObject();
             w.WriteNumber("ts", Ts);
+            w.WriteNumber("utc_offset_min", (int)TimeZoneInfo.Local.GetUtcOffset(
+                DateTimeOffset.FromUnixTimeSeconds(Ts)).TotalMinutes);
             w.WriteBoolean("music_playing", MusicPlaying);
             w.WriteStartObject("claude");
             w.WriteString("status", Claude.Status);
@@ -58,8 +64,10 @@ class StatusSnapshot
             w.WriteNumber("session_window_min", Claude.SessionWindowMin);
             WriteNullable(w, "five_hour_pct", Claude.FiveHourPct);
             WriteNullable(w, "five_hour_reset_min", Claude.FiveHourResetMin);
+            WriteNullable(w, "five_hour_reset_at", Claude.FiveHourResetAt);
             WriteNullable(w, "seven_day_pct", Claude.SevenDayPct);
             WriteNullable(w, "seven_day_reset_min", Claude.SevenDayResetMin);
+            WriteNullable(w, "seven_day_reset_at", Claude.SevenDayResetAt);
             w.WriteBoolean("needs_input", Claude.NeedsInput);
             w.WriteEndObject();
             w.WriteStartObject("codex");
@@ -68,9 +76,11 @@ class StatusSnapshot
             WriteNullable(w, "primary_pct", Codex.PrimaryPct);
             WriteNullable(w, "primary_window_min", Codex.PrimaryWindowMin);
             WriteNullable(w, "primary_reset_min", Codex.PrimaryResetMin);
+            WriteNullable(w, "primary_reset_at", Codex.PrimaryResetAt);
             WriteNullable(w, "weekly_pct", Codex.WeeklyPct);
             WriteNullable(w, "weekly_window_min", Codex.WeeklyWindowMin);
             WriteNullable(w, "weekly_reset_min", Codex.WeeklyResetMin);
+            WriteNullable(w, "weekly_reset_at", Codex.WeeklyResetAt);
             w.WriteBoolean("needs_input", Codex.NeedsInput);
             w.WriteEndObject();
             w.WriteEndObject();
@@ -261,18 +271,22 @@ sealed class StatusService
                 var cu = Usage.Claude;
                 snap.Claude.FiveHourPct = cu.PrimaryPct;
                 snap.Claude.FiveHourResetMin = cu.PrimaryResetMin;
+                snap.Claude.FiveHourResetAt = cu.PrimaryResetAt;
                 snap.Claude.SevenDayPct = cu.WeeklyPct;
                 snap.Claude.SevenDayResetMin = cu.WeeklyResetMin;
+                snap.Claude.SevenDayResetAt = cu.WeeklyResetAt;
                 var xu = Usage.Codex;
                 if (xu.PrimaryPct.HasValue)
                 {
                     snap.Codex.PrimaryPct = xu.PrimaryPct;
                     snap.Codex.PrimaryResetMin = xu.PrimaryResetMin;
+                    snap.Codex.PrimaryResetAt = xu.PrimaryResetAt;
                 }
                 if (xu.WeeklyPct.HasValue)
                 {
                     snap.Codex.WeeklyPct = xu.WeeklyPct;
                     snap.Codex.WeeklyResetMin = xu.WeeklyResetMin;
+                    snap.Codex.WeeklyResetAt = xu.WeeklyResetAt;
                 }
             }
             snap.Claude.Status = OverrideStatus(snap.Claude.Status, _claudeEvent, now);
@@ -547,6 +561,7 @@ sealed class StatusService
                         s.WeeklyPct = pct;
                         s.WeeklyWindowMin = winMin;
                         s.WeeklyResetMin = resetMin;
+                        s.WeeklyResetAt = reset;
                     }
                 }
                 else if (!s.PrimaryPct.HasValue)
@@ -554,6 +569,7 @@ sealed class StatusService
                     s.PrimaryPct = pct;
                     s.PrimaryWindowMin = winMin;
                     s.PrimaryResetMin = resetMin;
+                    s.PrimaryResetAt = reset;
                 }
             }
         }

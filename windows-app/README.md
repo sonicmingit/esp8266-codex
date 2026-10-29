@@ -7,6 +7,7 @@
 
 - **USB 有线优先**：插入 SD2 后自动识别 CH340/CH343 串口并握手，额度、状态、网速、股票及显示/亮度命令优先走 USB；拔线后自动回退 Wi-Fi/LAN
 - **设备默认显示**：托盘菜单的“屏幕显示”会直接写入设备；选择“固定 Codex（开机默认）”后，设备重启仍显示 Codex
+- **重置时间显示**：托盘可切换倒计时或具体日期时间，同时应用于 5 小时和周额度、写入设备并在重启后保留；需配合 `0.4.4-sonic` 固件。时间跟随 Windows 本地时区，USB 关闭 Wi-Fi 时也能使用。
 - **USB 省 Wi-Fi**：可在托盘菜单开启“USB 直连时关闭设备 Wi-Fi”；USB 桥接握手成功后固件关闭无线，断开 USB 后的普通开机仍可照常连 Wi-Fi
 - **左键托盘图标** → ESP8266 屏幕实时镜像（额度环 + 桌宠动画 + 网速图 + 音乐页，
   与设备渲染同一份数据），底部附 自动/Claude/Codex/双栏/网速/音乐/股票 快速切换
@@ -53,8 +54,8 @@ Windows 客户端会每 2 秒扫描串口。默认优先识别 WCH CH340/CH343�
 ```powershell
 cd windows-app\AIClockBridge
 dotnet run                # 前台运行（托盘出现小电脑图标）
-# 或发布单文件：
-dotnet publish -c Release -r win-x64 --self-contained false
+# 或发布免安装单文件（包含 .NET 运行时）：
+dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false
 # 产物在 bin\Release\net8.0-windows10.0.19041.0\win-x64\publish\AIClockBridge.exe
 ```
 
@@ -90,6 +91,14 @@ curl.exe -s http://localhost:8765/status | python -m json.tool
 ```
 
 配置持久化在 `%APPDATA%\AIClockBridge\settings.json`（设备地址等）。
+
+额度缓存和重置时刻的离线回归检查（不读取账号凭据、不发起额度请求）：
+
+```powershell
+dotnet run --project windows-app/tests/Usage.Tests.csproj
+```
+
+以上测试命令从仓库根目录执行。
 
 ## 代码结构
 

@@ -3,6 +3,17 @@ import XCTest
 @testable import AIClockBridge
 
 final class StatusReaderTests: XCTestCase {
+    func testUsageKeepsFixedResetInstants() {
+        var usage = ProviderUsage()
+        let deadline = Date().timeIntervalSince1970 + 150
+        usage.primaryResetAt = deadline
+        usage.weeklyResetAt = deadline - 3600
+        XCTAssertEqual(usage.primaryResetMin, 2)
+        XCTAssertEqual(usage.weeklyResetMin, 0)
+        XCTAssertEqual(usage.primaryResetAt, deadline)
+        XCTAssertNil(ProviderUsage().primaryResetMin)
+    }
+
     func testSnapshotReturnsWithoutWaitingForScanAndCoalescesRequests() {
         let scanStarted = DispatchSemaphore(value: 0)
         let releaseScan = DispatchSemaphore(value: 0)

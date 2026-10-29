@@ -13,8 +13,10 @@ struct ClaudeStatus {
     var sessionWindowMin: Int = 300
     var fiveHourPct: Double? = nil
     var fiveHourResetMin: Int? = nil
+    var fiveHourResetAt: Double? = nil
     var sevenDayPct: Double? = nil
     var sevenDayResetMin: Int? = nil
+    var sevenDayResetAt: Double? = nil
     var needsInput: Bool = false // waiting on a permission/approval prompt
 }
 
@@ -24,9 +26,11 @@ struct CodexStatus {
     var primaryPct: Double? = nil
     var primaryWindowMin: Int? = nil
     var primaryResetMin: Int? = nil
+    var primaryResetAt: Double? = nil
     var weeklyPct: Double? = nil
     var weeklyWindowMin: Int? = nil
     var weeklyResetMin: Int? = nil
+    var weeklyResetAt: Double? = nil
     var needsInput: Bool = false
 }
 
@@ -376,16 +380,20 @@ final class StatusService {
             let claudeUsage = u.claude
             snap.claude.fiveHourPct = claudeUsage.primaryPct
             snap.claude.fiveHourResetMin = claudeUsage.primaryResetMin
+            snap.claude.fiveHourResetAt = claudeUsage.primaryResetAt
             snap.claude.sevenDayPct = claudeUsage.weeklyPct
             snap.claude.sevenDayResetMin = claudeUsage.weeklyResetMin
+            snap.claude.sevenDayResetAt = claudeUsage.weeklyResetAt
             let codexUsage = u.codex
             if let pct = codexUsage.primaryPct {
                 snap.codex.primaryPct = pct
                 snap.codex.primaryResetMin = codexUsage.primaryResetMin
+                snap.codex.primaryResetAt = codexUsage.primaryResetAt
             }
             if let pct = codexUsage.weeklyPct {
                 snap.codex.weeklyPct = pct
                 snap.codex.weeklyResetMin = codexUsage.weeklyResetMin
+                snap.codex.weeklyResetAt = codexUsage.weeklyResetAt
             }
         }
         snap.claude.status = overrideStatus(
@@ -813,11 +821,13 @@ final class StatusService {
                     status.weeklyPct = pct
                     status.weeklyWindowMin = winMin
                     status.weeklyResetMin = resetMin
+                    status.weeklyResetAt = (w["resets_at"] as? NSNumber)?.doubleValue
                 }
             } else if status.primaryPct == nil {
                 status.primaryPct = pct
                 status.primaryWindowMin = winMin
                 status.primaryResetMin = resetMin
+                status.primaryResetAt = (w["resets_at"] as? NSNumber)?.doubleValue
             }
         }
     }
@@ -830,6 +840,7 @@ extension Snapshot {
         func num(_ v: Double?) -> Any { v.map { $0 as Any } ?? NSNull() }
         let dict: [String: Any] = [
             "ts": ts,
+            "utc_offset_min": TimeZone.current.secondsFromGMT(for: Date(timeIntervalSince1970: TimeInterval(ts))) / 60,
             "music_playing": musicPlaying,
             "claude": [
                 "status": claude.status,
@@ -838,8 +849,10 @@ extension Snapshot {
                 "session_window_min": claude.sessionWindowMin,
                 "five_hour_pct": num(claude.fiveHourPct),
                 "five_hour_reset_min": num(claude.fiveHourResetMin),
+                "five_hour_reset_at": num(claude.fiveHourResetAt),
                 "seven_day_pct": num(claude.sevenDayPct),
                 "seven_day_reset_min": num(claude.sevenDayResetMin),
+                "seven_day_reset_at": num(claude.sevenDayResetAt),
                 "needs_input": claude.needsInput,
             ],
             "codex": [
@@ -848,9 +861,11 @@ extension Snapshot {
                 "primary_pct": num(codex.primaryPct),
                 "primary_window_min": num(codex.primaryWindowMin),
                 "primary_reset_min": num(codex.primaryResetMin),
+                "primary_reset_at": num(codex.primaryResetAt),
                 "weekly_pct": num(codex.weeklyPct),
                 "weekly_window_min": num(codex.weeklyWindowMin),
                 "weekly_reset_min": num(codex.weeklyResetMin),
+                "weekly_reset_at": num(codex.weeklyResetAt),
                 "needs_input": codex.needsInput,
             ],
         ]
