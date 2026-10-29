@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 FROM mcr.microsoft.com/dotnet/sdk:10.0-noble AS build
 WORKDIR /src
 COPY AIClockBridge.Linux.csproj ./
@@ -14,7 +13,7 @@ ENV TZ=Asia/Shanghai AICLOCK_DOCKER=1 AICLOCK_PORT=8765 AICLOCK_DATA_DIR=/data \
     AICLOCK_CODEX_HOME=/credentials/codex AICLOCK_CLAUDE_HOME=/credentials/claude \
     AICLOCK_CODEX_MODE=readonly DOTNET_EnableDiagnostics=0
 EXPOSE 8765
-# Compose supplies the host user's uid:gid, preserving bind-mount access.
+# Compose overrides this user to run as root for bind-mount access.
 # Direct docker run defaults to the non-root .NET application user.
 USER $APP_UID
 ENTRYPOINT ["dotnet", "AIClockBridge.Linux.dll"]

@@ -7,7 +7,7 @@ services:
         CODEX_VERSION: "${AICLOCK_CODEX_VERSION:-0.162.0}"
     image: aiclock-linux:latest
     restart: unless-stopped
-    user: "${AICLOCK_UID:-1000}:${AICLOCK_GID:-1000}"
+    user: "0:0"
     ports:
       - "${AICLOCK_HOST_PORT:-8765}:8765"
     environment:
@@ -42,3 +42,6 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    cap_add:
+      - DAC_OVERRIDE
+      - FOWNER

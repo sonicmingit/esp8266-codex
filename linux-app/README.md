@@ -45,15 +45,13 @@ bash deploy.sh
 
 ```dotenv
 AICLOCK_HOST_PORT=8766
-AICLOCK_UID=1000
-AICLOCK_GID=1000
 AICLOCK_DATA_PATH=/home/你的用户/aiclock-data
 AICLOCK_CODEX_PATH=/home/你的用户/.codex
 AICLOCK_CLAUDE_PATH=/home/你的用户/.claude
 AICLOCK_ADVERTISED_HOST=192.168.1.20:8766
 ```
 
-先创建数据目录并确保配置的 UID/GID 有写入权限，凭据来源目录须已存在。未使用的来源也要指向已存在的空目录：
+先创建数据目录，凭据来源目录须已存在。未使用的来源也要指向已存在的空目录：
 
 ```bash
 mkdir -p /home/你的用户/aiclock-data
@@ -61,6 +59,8 @@ docker compose -f compose.yaml up -d --build
 ```
 
 Docker 内部始终监听 8765；`AICLOCK_HOST_PORT` 控制宿主机端口。改端口后重新创建容器，再在网页更新“设备可访问的服务地址”，保存并重新指向设备。
+
+Compose 容器以 root 运行，并保留访问及调整挂载目录权限所需的能力。容器可修改绑定的数据目录中的宿主机文件；只读凭据挂载仍为只读。旧 `.env` 中的 `AICLOCK_UID` 和 `AICLOCK_GID` 不再生效。服务创建的文件可能归宿主机 root 所有。
 
 `AICLOCK_ADVERTISED_HOST` 和目录/模式环境变量仅在**没有 settings.json 的首次启动**时预填配置。之后以网页保存的设置为准，不会用环境变量覆盖你的网页修改。
 
@@ -102,7 +102,7 @@ docker compose -f compose.yaml down
 
 统一镜像已安装 `bubblewrap`，升级已有部署后需要重新构建镜像。Linux 原生运行自动续期模式时，也需安装发行版提供的 `bubblewrap` 包，例如 Ubuntu/Debian 使用 `sudo apt install bubblewrap`。
 
-自动续期目录中的 `auth.json` 可写还不够：Codex CLI 会在 `tmp/arg0` 创建 PATH 别名、设置目录权限，并使用缓存和日志目录。目录从其他容器复制或被其他服务修改后，应在宿主机确认自动续期目录及其内部文件、子目录的属主都与 `.env` 的 `AICLOCK_UID:AICLOCK_GID` 一致。宿主机的默认位置是 `AICLOCK_DATA_PATH` 下的 `codex`；调整过网页凭据路径时，以实际挂载位置为准。只修复顶层目录可能仍导致 CLI 提前退出。
+自动续期目录中的 `auth.json` 可写还不够：Codex CLI 会在 `tmp/arg0` 创建 PATH 别名、设置目录权限，并使用缓存和日志目录。宿主机的默认位置是 `AICLOCK_DATA_PATH` 下的 `codex`；调整过网页凭据路径时，以实际挂载位置为准。文件系统的挂载限制或容器沙箱设置仍可能影响访问。
 
 页面现在会为 App Server 提前退出显示退出码，以及权限、配置加载或缺少 bubblewrap 等错误类别。原始 CLI 错误输出可能包含账号与配置内容，不会直接返回网页。
 

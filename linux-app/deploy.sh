@@ -34,15 +34,15 @@ if [[ ! -f .env ]]; then
   fi
   umask 077
   {
-    printf 'AICLOCK_HOST_PORT=8765\nAICLOCK_UID=%s\nAICLOCK_GID=%s\n' "$(id -u)" "$(id -g)"
+    printf 'AICLOCK_HOST_PORT=8765\n'
     printf "AICLOCK_DATA_PATH='%s/data'\n" "$PWD"
     printf "AICLOCK_CODEX_PATH='%s'\nAICLOCK_CLAUDE_PATH='%s'\n" "$task_codex_path" "$task_claude_path"
     printf 'AICLOCK_ADVERTISED_HOST=\nAICLOCK_CODEX_VERSION=0.162.0\n'
   } > .env
   printf '已生成 .env，可在其中调整目录与对外端口。\n'
 fi
-mkdir -p data/empty-codex data/empty-claude data/codex
-chmod 700 data/codex
+mkdir -p data/empty-codex data/empty-claude
+mkdir -p -m 700 data/codex
 docker compose -f compose.yaml up -d --build
 printf '部署完成。访问 http://本机局域网IP:对外端口/，默认端口 8765。\n'
 printf '容器时区：北京时间 Asia/Shanghai（UTC+8），所有定时任务按北京时间执行。\n'
