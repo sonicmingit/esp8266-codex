@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../AIClockBridge/UsageFetcher.cs" Link="UsageFetcher.cs" />
+    <Compile Include="../AIClockBridge/StatusService.cs" Link="StatusService.cs" />
     <Compile Include="../AIClockBridge/Settings.cs" Link="Settings.cs" />
   </ItemGroup>
 </Project>

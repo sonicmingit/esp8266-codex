@@ -776,9 +776,11 @@ sealed class MirrorForm : Form
         }
         var snap = _service.Snapshot();
         _mirror.ShowingClaude = info.Showing != "codex";
-        _mirror.ShortWindow = _mirror.ShowingClaude || (snap.Codex.PrimaryWindowMin ?? 300) < 1440;
-        _mirror.HourResetMin = _mirror.ShowingClaude ? snap.Claude.FiveHourResetMin : snap.Codex.PrimaryResetMin;
-        _mirror.HourResetAt = _mirror.ShowingClaude ? snap.Claude.FiveHourResetAt : snap.Codex.PrimaryResetAt;
+        _mirror.ShortWindow = _mirror.ShowingClaude || snap.Codex.HasShortWindow;
+        _mirror.HourResetMin = _mirror.ShowingClaude ? snap.Claude.FiveHourResetMin
+            : _mirror.ShortWindow ? snap.Codex.PrimaryResetMin : null;
+        _mirror.HourResetAt = _mirror.ShowingClaude ? snap.Claude.FiveHourResetAt
+            : _mirror.ShortWindow ? snap.Codex.PrimaryResetAt : null;
         _mirror.WeekResetMin = _mirror.ShowingClaude ? snap.Claude.SevenDayResetMin
             : snap.Codex.WeeklyPct.HasValue ? snap.Codex.WeeklyResetMin
             : !_mirror.ShortWindow ? snap.Codex.PrimaryResetMin : null;
@@ -800,7 +802,7 @@ sealed class MirrorForm : Form
             // Codex may only have a weekly window now (5h limit dropped):
             // ring + single line follow whatever windows actually exist.
             _mirror.RingPct = snap.Codex.PrimaryPct ?? snap.Codex.WeeklyPct ?? 0;
-            if (!_mirror.ShortWindow || (!snap.Codex.PrimaryPct.HasValue && snap.Codex.WeeklyPct.HasValue))
+            if (!_mirror.ShortWindow)
             {
                 _mirror.Line1 = "Weekly " + PctText(snap.Codex.WeeklyPct ?? snap.Codex.PrimaryPct);
                 _mirror.Line2 = "";

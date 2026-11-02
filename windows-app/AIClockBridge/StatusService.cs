@@ -37,6 +37,10 @@ class CodexStatus
     public int? WeeklyResetMin;
     public double? WeeklyResetAt;
     public bool NeedsInput;
+
+    // A missing duration defaults to 300 for older bridges; require an actual
+    // primary quota so a weekly-only account does not acquire a 5h reset label.
+    public bool HasShortWindow => PrimaryPct is >= 0 && (PrimaryWindowMin ?? 300) is > 0 and < 1440;
 }
 
 class StatusSnapshot

@@ -16,7 +16,8 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>AIClockBridge</AssemblyName>
     <RootNamespace>AIClockBridge</RootNamespace>
-    <Version>0.4.4-sonic</Version>
+    <ApplicationIcon>Assets\happy-mac.ico</ApplicationIcon>
+    <Version>0.4.5-sonic</Version>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
   </PropertyGroup>
 

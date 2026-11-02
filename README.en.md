@@ -31,7 +31,8 @@ This branch incorporates selected upstream fixes and adds personal-use extension
 
 - Integrates selected upstream fixes from [PRs #2, #10, #11, #16, #19 and #21](docs/PR-UPGRADE-2026-08-11.md).
 - Adds Windows CH340/CH343 serial detection, `#HELLO` / `#DEVICE` handshake, USB-first connectivity with LAN fallback, and serial updates for quota, status, network speed and display settings.
-- Ships firmware and the Windows app as `0.4.4-sonic`; reset times can show countdowns or calendar dates and times, with persistent settings and an option to disable device Wi-Fi during USB use.
+- Ships firmware and the Windows app as `0.4.5-sonic`; weekly-only accounts no longer show a nonexistent 5-hour quota or reset label on the device or Windows mirror, and the Windows executable uses the project's icon.
+- Reset times can show countdowns or calendar dates and times, with persistent settings and an option to disable device Wi-Fi during USB use.
 - Adds Linux Bridge with Docker or native deployment, Codex / Claude quota checks, Petdex uploads, multi-device pairing and connection checks.
 - Linux Bridge supports per-device display, brightness and on/off schedules, plus daily Codex messages, manual sends and recent results.
 

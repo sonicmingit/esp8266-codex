@@ -40,3 +40,18 @@ Check(expired.WeeklyResetMin == 0 && expired.WeeklyResetAt == at - 3600,
     "Expired countdown changed the original reset date");
 Check(new ProviderUsage().PrimaryResetMin == null, "Unknown reset became a date");
 Console.WriteLine("PASS expired and unknown reset handling");
+
+foreach (var (status, expected) in new[] {
+    (new CodexStatus { WeeklyPct = 1, WeeklyWindowMin = 10080 }, false),
+    (new CodexStatus { PrimaryWindowMin = 300, WeeklyPct = 1 }, false),
+    (new CodexStatus(), false),
+    (new CodexStatus { PrimaryPct = -1, PrimaryWindowMin = 300 }, false),
+    (new CodexStatus { PrimaryPct = 24, PrimaryWindowMin = 10080 }, false),
+    (new CodexStatus { PrimaryPct = 24, PrimaryWindowMin = 0 }, false),
+    (new CodexStatus { PrimaryPct = 24, PrimaryWindowMin = 1440 }, false),
+    (new CodexStatus { PrimaryPct = 0, PrimaryWindowMin = 300 }, true),
+    (new CodexStatus { PrimaryPct = 100, PrimaryWindowMin = 300 }, true),
+    (new CodexStatus { PrimaryPct = 24 }, true), // Legacy bridge without duration
+})
+    Check(status.HasShortWindow == expected, "Mirror selected a missing or misclassified 5h window");
+Console.WriteLine("PASS weekly-only, unknown, legacy and real 5h window selection");

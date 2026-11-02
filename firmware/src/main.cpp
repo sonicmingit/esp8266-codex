@@ -18,6 +18,7 @@
 #include <time.h>
 
 #include "config.h"
+#include "quota_windows.h"
 #include "img/claude_sprite.h"
 #include "img/codex_sprite.h"
 #include "img/claude_logo.h"
@@ -754,10 +755,15 @@ void drawTinyBoldText(const String &s, int cx, int y, uint16_t color) {
   }
 }
 
+bool currentHasShortWindow() {
+  return currentApp == APP_CLAUDE ||
+      hasShortQuotaWindow(codexStatus.primaryPct, codexStatus.primaryWindowMin);
+}
+
 void drawQuotaText(float hourPct, float weekPct, bool force) {
-  // Codex dropped the 5h window (2026-07): the bridge then sends
-  // primary_pct=null, so collapse to a single centered "Wk" column.
-  bool single = hourPct < 0 && weekPct >= 0;
+  // Use the same window selection as the reset labels, including while quota
+  // data is unknown. A weekly-only account never gets a placeholder 5h column.
+  bool single = !currentHasShortWindow();
   static int8_t lastSingle = -1;
   if ((int8_t)single != lastSingle) {
     lastSingle = (int8_t)single;
@@ -802,12 +808,12 @@ enum CdType { CD_NONE, CD_5H, CD_WEEK };
 
 float currentHourPct() {
   return currentApp == APP_CLAUDE ? claudeStatus.fiveHourPct
-                                : (codexStatus.primaryWindowMin < 1440 ? codexStatus.primaryPct : -1);
+                                : (currentHasShortWindow() ? codexStatus.primaryPct : -1);
 }
 
 int currentHourResetMin() {
   return currentApp == APP_CLAUDE ? claudeStatus.fiveHourResetMin
-                                : (codexStatus.primaryWindowMin < 1440 ? codexStatus.primaryResetMin : -1);
+                                : (currentHasShortWindow() ? codexStatus.primaryResetMin : -1);
 }
 
 float currentWeekPct() {
@@ -824,7 +830,7 @@ int currentWeekResetMin() {
 
 time_t currentHourResetAt() {
   return currentApp == APP_CLAUDE ? claudeStatus.fiveHourResetAt
-      : (codexStatus.primaryWindowMin < 1440 ? codexStatus.primaryResetAt : 0);
+      : (currentHasShortWindow() ? codexStatus.primaryResetAt : 0);
 }
 
 time_t currentWeekResetAt() {
@@ -948,7 +954,7 @@ void drawResetDays(bool force) {
                               : (hour < 0 ? String("-") : hour >= 1440 ? resetDaysText(hour)
                                  : String(hour / 60) + "h" + String(hour % 60) + "m");
   String w = resetTimeDateTime ? resetDateText(week, "%m/%d %H:%M", currentWeekResetAt()) : resetDaysText(week);
-  bool shortWindow = currentApp == APP_CLAUDE || codexStatus.primaryWindowMin < 1440;
+  bool shortWindow = currentHasShortWindow();
   String t = String(shortWindow ? "two|" : "one|") + h + "|" + w;
   if (!force && t == lastResetDays) return;
   lastResetDays = t;
