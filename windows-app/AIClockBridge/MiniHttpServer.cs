@@ -167,7 +167,9 @@ sealed class MiniHttpServer
         var clean = path.Split('?')[0];
         var ip = (client.Client.RemoteEndPoint as IPEndPoint)?.Address?.ToString() ?? "";
         if (ip.StartsWith("::ffff:")) ip = ip["::ffff:".Length..]; // v4-mapped
-        if (ip.Length > 0) OnRequest?.Invoke(clean, ip);
+        // A watch is a read-only viewer, not an ESP8266 we can pair/control.
+        // Still serve the same routes, but keep it out of passive discovery.
+        if (ip.Length > 0 && !IsWatchViewer(path)) OnRequest?.Invoke(clean, ip);
 
         byte[] body;
         string statusLine, contentType;
@@ -206,5 +208,12 @@ sealed class MiniHttpServer
         headerBytes.CopyTo(response, 0);
         body.CopyTo(response, headerBytes.Length);
         return response;
+    }
+
+    internal static bool IsWatchViewer(string path)
+    {
+        int question = path.IndexOf('?');
+        if (question < 0) return false;
+        return path[(question + 1)..].Split('&').Any(part => part == "client=watch");
     }
 }

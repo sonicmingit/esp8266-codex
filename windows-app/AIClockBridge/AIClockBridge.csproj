@@ -17,7 +17,7 @@
     <AssemblyName>AIClockBridge</AssemblyName>
     <RootNamespace>AIClockBridge</RootNamespace>
     <ApplicationIcon>Assets\happy-mac.ico</ApplicationIcon>
-    <Version>0.4.5-sonic</Version>
+    <Version>0.4.6-sonic</Version>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
   </PropertyGroup>
 

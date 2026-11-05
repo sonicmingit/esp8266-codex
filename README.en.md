@@ -34,6 +34,7 @@ This branch incorporates selected upstream fixes and adds personal-use extension
 - Ships firmware and the Windows app as `0.4.5-sonic`; weekly-only accounts no longer show a nonexistent 5-hour quota or reset label on the device or Windows mirror, and the Windows executable uses the project's icon.
 - Reset times can show countdowns or calendar dates and times, with persistent settings and an option to disable device Wi-Fi during USB use.
 - Adds Linux Bridge with Docker or native deployment, Codex / Claude quota checks, Petdex uploads, multi-device pairing and connection checks.
+- Adds the [Xiaomi Watch 5 app](watch-app/README.md) `0.2.0`: multiple bridge addresses selected by the Wi-Fi subnet, visible connection addresses, a pet-left/quota-right circular layout, and online pet search and replacement. Windows `0.4.6-sonic` keeps watch requests out of hardware pairing. APK builds pass; 0.2.0 device validation is pending installation.
 - Linux Bridge supports per-device display, brightness and on/off schedules, plus daily Codex messages, manual sends and recent results.
 
 ## Screenshots

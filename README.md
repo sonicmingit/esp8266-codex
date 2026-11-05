@@ -34,6 +34,7 @@
 - 固件与 Windows 客户端提供 `0.4.5-sonic` 版本；仅有周额度时隐藏不存在的 5 小时额度与重置提示，设备和 Windows 镜像保持一致；Windows 程序图标与项目图标统一。
 - 可切换额度重置倒计时或具体日期时间，设置重启保留，也可在 USB 直连时关闭设备 Wi-Fi。
 - 新增 Linux Bridge，支持 Docker 或原生部署、Codex / Claude 额度查询、Petdex 宠物上传、多设备配对与连接测试。
+- 新增 [Xiaomi Watch 5 手表端](watch-app/README.md) `0.2.0`：多地址随 Wi-Fi 网段自动选址，圆屏左宠物/右额度，首页显示 IP，支持手表联网搜索并更换宠物；Windows `0.4.6-sonic` 避免手表访问干扰实体屏幕配对。APK 已构建，0.2.0 真机验收待安装后进行。
 - Linux Bridge 可为每台小屏幕分别配置显示模式、常规/关闭/夜间亮度与定时开关屏；还可配置 Codex 每日定时消息、手动发送及最近结果记录。
 - 保留上游 Mac 桥接及设备端宠物、音乐、网速等能力；部分功能需要局域网 HTTP 连接。
 
@@ -95,6 +96,7 @@ firmware/     ESP8266 固件（PlatformIO + Arduino，含板上 GIF 解码）
 mac-app/      macOS 菜单栏桥接（Swift/SPM，零第三方依赖）
 windows-app/  Windows 托盘桥接（C# / .NET 8 WinForms）
 linux-app/    Linux 桥接与网页控制台（ASP.NET Core / Docker）
+watch-app/    Xiaomi Watch 5 原生圆屏额度 APK（Java / Android SDK 命令行）
 tools/        GIF → RGB565 内置精灵图转换脚本
 docs/         开发文档（硬件引脚、HTTP API、架构细节）
 ```

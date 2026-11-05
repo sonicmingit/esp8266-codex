@@ -38,3 +38,9 @@ firmware/.cache/
 .env.*
 *.local
 *.local.json
+
+# Watch APK: local Android SDK, signing key and generated build products
+watch-app/.tools/
+watch-app/.build/
+watch-app/.signing/
+watch-app/qa/generated/

@@ -55,3 +55,23 @@ foreach (var (status, expected) in new[] {
 })
     Check(status.HasShortWindow == expected, "Mirror selected a missing or misclassified 5h window");
 Console.WriteLine("PASS weekly-only, unknown, legacy and real 5h window selection");
+
+// Real requests: a watch may read status without replacing the paired hardware.
+var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+probe.Start();
+var port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
+probe.Stop();
+var http = new MiniHttpServer(port, new() { ["/status"] = () => System.Text.Encoding.UTF8.GetBytes("{\"codex\":{}}") });
+var visits = new List<string>();
+http.OnRequest = (path, ip) => { lock (visits) visits.Add(path); };
+http.Rebind(System.Net.IPAddress.Loopback);
+using var client = new HttpClient();
+var watchJson = await client.GetStringAsync($"http://127.0.0.1:{port}/status?client=watch");
+Check(watchJson.Contains("codex") && visits.Count == 0, "Watch was reported as a pairable hardware device");
+await client.GetStringAsync($"http://127.0.0.1:{port}/status");
+Check(visits.Count == 1 && visits[0] == "/status", "Hardware passive discovery stopped working");
+await client.GetStringAsync($"http://127.0.0.1:{port}/status?x=1&client=watch");
+Check(visits.Count == 1, "Viewer marker failed with other query parameters");
+await client.GetStringAsync($"http://127.0.0.1:{port}/status?client=watchdog");
+Check(visits.Count == 2, "Unrelated query suppressed hardware discovery");
+Console.WriteLine("PASS watch HTTP viewer preserves hardware passive discovery");
