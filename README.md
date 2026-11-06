@@ -29,6 +29,7 @@
 
 本分支跟进并整理了上游已公开的修复，同时增加个人使用所需的扩展：
 
+- [Windows PC 接收端](windows-app/AIClockReceiver/README.md) 支持单宠物、双栏和贴边窄栏。可吸附屏幕左右两边，分别为 Claude、Codex 选择 Petdex 动态宠物，并切换已用或剩余额度。
 - 合并上游 Pull Request [#2、#10、#11、#16、#19、#21](docs/PR-UPGRADE-2026-08-11.md) 中适合本分支的修复与功能。
 - Windows 客户端支持 CH340/CH343 USB 串口识别、`#HELLO` / `#DEVICE` 握手、有线优先和断线后回退局域网，并可通过串口更新额度、状态、网速与显示设置。
 - 固件与 Windows 客户端提供 `0.4.5-sonic` 版本；仅有周额度时隐藏不存在的 5 小时额度与重置提示，设备和 Windows 镜像保持一致；Windows 程序图标与项目图标统一。

@@ -1,0 +1,38 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="接收端设置" Width="400" SizeToContent="Height" MaxHeight="640" WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize" ShowInTaskbar="False" FontFamily="Segoe UI, Microsoft YaHei UI" FontSize="14"
+        Background="#FAF8F4" Foreground="#272520">
+  <Window.Resources>
+    <Style TargetType="Label"><Setter Property="Padding" Value="0"/><Setter Property="Margin" Value="0,0,0,5"/><Setter Property="FontSize" Value="13"/></Style>
+  </Window.Resources>
+  <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="22,16,22,16">
+    <TextBlock Text="窗口与额度" FontSize="21" FontWeight="SemiBold" Margin="0,0,0,14"/>
+    <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="14"/><ColumnDefinition/></Grid.ColumnDefinitions>
+      <StackPanel><Label Target="{Binding ElementName=View}">窗口形态</Label>
+        <ComboBox x:Name="View"><ComboBoxItem>单宠物</ComboBoxItem><ComboBoxItem>双栏</ComboBoxItem><ComboBoxItem>贴边窄栏</ComboBoxItem></ComboBox></StackPanel>
+      <StackPanel Grid.Column="2"><Label Target="{Binding ElementName=Amount}">额度显示</Label>
+        <ComboBox x:Name="Amount"><ComboBoxItem>已使用量</ComboBoxItem><ComboBoxItem>剩余量</ComboBoxItem></ComboBox></StackPanel>
+    </Grid>
+    <Label Target="{Binding ElementName=Source}" Margin="0,12,0,5">单宠物与窄栏的来源</Label>
+    <ComboBox x:Name="Source"><ComboBoxItem>自动</ComboBoxItem><ComboBoxItem>Claude</ComboBoxItem><ComboBoxItem>Codex</ComboBoxItem></ComboBox>
+    <Border Height="1" Background="#DAD6CF" Margin="0,17,0,12"/>
+    <TextBlock Text="桌宠" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,8"/>
+    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="65"/><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <Grid.RowDefinitions><RowDefinition Height="38"/><RowDefinition Height="38"/></Grid.RowDefinitions>
+      <TextBlock VerticalAlignment="Center" Text="Claude"/><TextBlock Grid.Row="1" VerticalAlignment="Center" Text="Codex"/>
+      <TextBlock Grid.Column="1" x:Name="ClaudePetLabel" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Foreground="#625B53"/>
+      <TextBlock Grid.Row="1" Grid.Column="1" x:Name="CodexPetLabel" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Foreground="#625B53"/>
+      <Button Grid.Column="2" x:Name="ChooseClaude" Margin="4,3" Content="更换…" AutomationProperties.Name="更换 Claude 桌宠"/>
+      <Button Grid.Row="1" Grid.Column="2" x:Name="ChooseCodex" Margin="4,3" Content="更换…" AutomationProperties.Name="更换 Codex 桌宠"/>
+    </Grid>
+    <Border Height="1" Background="#DAD6CF" Margin="0,15,0,12"/>
+    <Label Target="{Binding ElementName=Address}">桥接地址</Label>
+    <TextBox x:Name="Address" Padding="7,5"/>
+    <TextBlock Text="例如 192.168.1.20:8765" FontSize="12" Margin="0,4,0,0" Foreground="#625B53"/>
+    <TextBlock x:Name="Error" Foreground="Firebrick" TextWrapping="Wrap" Margin="0,6"/>
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+      <Button Content="取消" IsCancel="True" Margin="0,0,8,0"/>
+      <Button x:Name="Save" Content="保存" IsDefault="True"/>
+    </StackPanel>
+  </StackPanel></ScrollViewer>
+</Window>

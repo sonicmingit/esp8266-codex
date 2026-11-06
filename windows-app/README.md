@@ -1,5 +1,7 @@
 # AIClockBridge for Windows
 
+如果要在另一台 Windows 电脑上接收额度，使用[独立桌面接收端](AIClockReceiver/README.md)。窗口可在单宠物、双栏和贴边窄栏之间切换。
+
 `mac-app/` 菜单栏桥接的 Windows 移植版：同一套功能、同一套设备协议（固件感知不到
 桥接跑在哪个系统上），以系统托盘图标形式常驻。
 
