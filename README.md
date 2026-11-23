@@ -32,7 +32,8 @@
 - [Windows PC 接收端](windows-app/AIClockReceiver/README.md) 支持单宠物、双栏和贴边窄栏。可吸附屏幕左右两边，分别为 Claude、Codex 选择 Petdex 动态宠物，并切换已用或剩余额度。
 - 合并上游 Pull Request [#2、#10、#11、#16、#19、#21](docs/PR-UPGRADE-2026-08-11.md) 中适合本分支的修复与功能。
 - Windows 客户端支持 CH340/CH343 USB 串口识别、`#HELLO` / `#DEVICE` 握手、有线优先和断线后回退局域网，并可通过串口更新额度、状态、网速与显示设置。
-- 固件与 Windows 客户端提供 `0.4.5-sonic` 版本；仅有周额度时隐藏不存在的 5 小时额度与重置提示，设备和 Windows 镜像保持一致；Windows 程序图标与项目图标统一。
+- `0.4.5-sonic` 起，仅有周额度时隐藏不存在的 5 小时额度与重置提示，设备和 Windows 镜像保持一致；Windows 程序图标与项目图标统一。
+- 固件 `0.4.7-sonic` 支持 Wi-Fi 自动重连，可在设备网页设置重试间隔，手机连接配网热点期间暂停重试。
 - 可切换额度重置倒计时或具体日期时间，设置重启保留，也可在 USB 直连时关闭设备 Wi-Fi。
 - 新增 Linux Bridge，支持 Docker 或原生部署、Codex / Claude 额度查询、Petdex 宠物上传、多设备配对与连接测试。
 - 新增 [Xiaomi Watch 5 手表端](watch-app/README.md) `0.2.0`：多地址随 Wi-Fi 网段自动选址，圆屏左宠物/右额度，首页显示 IP，支持手表联网搜索并更换宠物；Windows `0.4.6-sonic` 避免手表访问干扰实体屏幕配对。APK 已构建，0.2.0 真机验收待安装后进行。
@@ -72,12 +73,14 @@ Linux Bridge 的 Docker / 原生安装方式和网页控制台说明见 [Linux B
 
 设备首次开机会开热点 **`AI-Clock-Setup`**：手机连上后自动弹出配网页（没弹就用浏览器打开 `192.168.4.1`），选择家里 WiFi、输入密码，完成。
 
+`0.4.7-sonic` 固件会在已保存 WiFi 的情况下自动重试：开机时路由器还没启动，或使用中路由器暂时掉线，设备默认每 5 分钟尝试重新连接。可在配网热点首页的「WiFi 重连设置」，或联网后的设备管理网页修改间隔（30～86400 秒，300 秒为 5 分钟）；设置重启保留。手机等设备连接配网热点期间，自动重试暂停；离开热点后重新计时，连接成功后热点关闭。启用「USB 直连时关闭 Wi-Fi」并建立有线连接后，设备按该设置关闭 Wi-Fi，不再重试。
+
 ### 第 3 步 · 装桥接程序
 
-从 [Releases](https://github.com/sonicmingit/esp8266-codex/releases/latest) 下载并打开：
+本次固件版本不重新打包桥接程序；Windows 桥接、接收端和手表 APK 继续使用 [v0.4.6-sonic](https://github.com/sonicmingit/esp8266-codex/releases/tag/v0.4.6-sonic) 的附件：
 
-- **macOS**：`AIClockBridge-*-macOS.dmg`，拖入 Applications（ad-hoc 签名，首次启动需在「系统设置 → 隐私与安全性」允许，并同意本地网络权限）
-- **Windows**：`AIClockBridge-*-Windows-x64.exe`，双击即用；USB 连接 SD2 时自动使用有线数据通道，未插线时使用局域网
+- **macOS**：从 `mac-app/` 源码运行或构建桥接程序。
+- **Windows**：下载 `AIClockBridge-0.4.6-sonic-Windows-x64.exe`，双击即用；USB 连接 SD2 时自动使用有线数据通道，未插线时使用局域网。
 - **Linux**：按 [Linux Bridge 使用文档](linux-app/README.md) 使用 Docker 或原生方式部署；网页控制台可管理设备、查看额度和配置定时消息
 
 Mac / Windows 桥接程序常驻菜单栏 / 托盘。Windows 会优先自动握手 USB 串口；未连接 USB 时，自动发现并配对同一局域网内的设备。Linux Bridge 通过网页控制台配对设备——到这里屏幕就活了。

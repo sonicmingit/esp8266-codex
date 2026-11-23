@@ -31,7 +31,8 @@ This branch incorporates selected upstream fixes and adds personal-use extension
 
 - Integrates selected upstream fixes from [PRs #2, #10, #11, #16, #19 and #21](docs/PR-UPGRADE-2026-08-11.md).
 - Adds Windows CH340/CH343 serial detection, `#HELLO` / `#DEVICE` handshake, USB-first connectivity with LAN fallback, and serial updates for quota, status, network speed and display settings.
-- Ships firmware and the Windows app as `0.4.5-sonic`; weekly-only accounts no longer show a nonexistent 5-hour quota or reset label on the device or Windows mirror, and the Windows executable uses the project's icon.
+- Since `0.4.5-sonic`, weekly-only accounts no longer show a nonexistent 5-hour quota or reset label on the device or Windows mirror, and the Windows executable uses the project's icon.
+- Firmware `0.4.7-sonic` retries saved Wi-Fi connections, with a configurable interval and protection for users of the setup hotspot.
 - Reset times can show countdowns or calendar dates and times, with persistent settings and an option to disable device Wi-Fi during USB use.
 - Adds Linux Bridge with Docker or native deployment, Codex / Claude quota checks, Petdex uploads, multi-device pairing and connection checks.
 - Adds the [Xiaomi Watch 5 app](watch-app/README.md) `0.2.0`: multiple bridge addresses selected by the Wi-Fi subnet, visible connection addresses, a pet-left/quota-right circular layout, and online pet search and replacement. Windows `0.4.6-sonic` keeps watch requests out of hardware pairing. APK builds pass; 0.2.0 device validation is pending installation.
@@ -70,12 +71,14 @@ Open **[mac.qust.me/#flash](https://mac.qust.me/#flash)** in Chrome / Edge, plug
 
 On first boot the device opens a hotspot named **`AI-Clock-Setup`**: join it from your phone and the setup page pops up (or browse to `192.168.4.1`), pick your WiFi and enter the password. Done.
 
+Firmware `0.4.7-sonic` retries a saved WiFi network every 5 minutes by default if the router starts late or the connection drops. The interval can be set to 30–86400 seconds from the setup hotspot's WiFi reconnect settings or the device's admin page, and survives a restart. Retries pause while a device is connected to the setup hotspot; the interval restarts after the last client leaves. The hotspot closes after a successful connection. When the USB option to turn Wi-Fi off is enabled and a wired link is established, Wi-Fi stays off and retries stop.
+
 ### Step 3 · Install the bridge app
 
-Download from [Releases](https://github.com/sonicmingit/esp8266-codex/releases/latest) and open:
+This firmware release does not repackage the bridge apps; the Windows bridge, receiver and watch APK remain available in [v0.4.6-sonic](https://github.com/sonicmingit/esp8266-codex/releases/tag/v0.4.6-sonic):
 
-- **macOS**: `AIClockBridge-*-macOS.dmg`, drag into Applications (ad-hoc signed; on first launch allow it in "System Settings → Privacy & Security" and grant local-network access)
-- **Windows**: `AIClockBridge-*-Windows-x64.exe`, just double-click
+- **macOS**: run or build the bridge from `mac-app/`.
+- **Windows**: download and open `AIClockBridge-0.4.6-sonic-Windows-x64.exe`.
 - **Linux**: follow the [Linux Bridge guide](linux-app/README.md) for Docker or native installation; its web console manages devices, quota sources and scheduled messages
 
 The Mac / Windows bridge lives in your menu bar / tray. Windows prefers the USB serial link and falls back to the LAN; Linux Bridge pairs devices through its web console. At this point the screen comes alive.

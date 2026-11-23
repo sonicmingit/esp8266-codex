@@ -11,6 +11,8 @@
 #include <ESP8266HTTPClient.h>
 #include <WiFiClient.h>
 #include <WiFiManager.h>
+#include "wifi_recovery.h"
+#include "wifi_retry_settings.h"
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <TFT_eSPI.h>
@@ -157,6 +159,7 @@ bool setDisplayModeByName(String mode) {
 // Windows bridge completes the USB handshake when this setting is enabled.
 bool usbWifiOffWhenWired = false;
 bool wifiDisabledForWiredLink = false;
+uint32_t wifiRetrySeconds = WIFI_RETRY_DEFAULT_SECONDS;
 
 // When AUTO and the Mac reports audio playing, the screen auto-switches to the
 // music page and back when it stops — same spirit as the Claude/Codex auto
@@ -342,6 +345,11 @@ void saveUsbWifiOffWhenWired() {
   f.close();
 }
 
+void loadWifiRetrySeconds() {
+  uint32_t seconds;
+  if (readWifiRetrySeconds(LittleFS, seconds)) wifiRetrySeconds = seconds;
+}
+
 void disableWifiForWiredLink() {
   if (!usbWifiOffWhenWired || wifiDisabledForWiredLink) return;
   wifiDisabledForWiredLink = true;
@@ -349,7 +357,7 @@ void disableWifiForWiredLink() {
     webServer.stop();
     webServerStarted = false;
   }
-  WiFi.disconnect();
+  WiFi.disconnect(false, false); // Keep the saved network for the next power-up.
   WiFi.mode(WIFI_OFF);
   Serial.println("[wifi] disabled for active USB link");
 }
@@ -1836,6 +1844,71 @@ void drawStockScreen() {
 // ---------- WiFi / bridge polling ----------
 
 WiFiManager wifiManager; // global: the config portal now runs non-blocking in loop()
+WifiRecovery wifiRecovery(WIFI_RETRY_DEFAULT_SECONDS * 1000UL, WIFI_PORTAL_RETRY_WINDOW_MS);
+
+enum class WifiRetrySaveResult { Saved, Invalid, StorageError };
+
+WifiRetrySaveResult updateWifiRetrySeconds(String input) {
+  input.trim();
+  uint32_t seconds;
+  if (!parseWifiRetrySeconds(input.c_str(), seconds)) return WifiRetrySaveResult::Invalid;
+  if (!writeWifiRetrySeconds(LittleFS, seconds)) return WifiRetrySaveResult::StorageError;
+  wifiRetrySeconds = seconds;
+  wifiRecovery.setRetryInterval(seconds * 1000UL, millis());
+  Serial.printf("[wifi] retry interval = %lu seconds\n", static_cast<unsigned long>(seconds));
+  return WifiRetrySaveResult::Saved;
+}
+
+String wifiRetryForm(const char *action, bool redirect) {
+  String html = F("<form method='POST' action='");
+  html += action;
+  html += F("'><label for='wifi-retry-seconds'>WiFi 重连间隔（秒）</label>");
+  html += F("<input id='wifi-retry-seconds' name='seconds' type='number' inputmode='numeric' min='");
+  html += String(WIFI_RETRY_MIN_SECONDS);
+  html += F("' max='");
+  html += String(WIFI_RETRY_MAX_SECONDS);
+  html += F("' step='1' required value='");
+  html += String(wifiRetrySeconds);
+  html += F("'>");
+  html += F("<p>可设置 30 至 86400 秒；300 秒等于 5 分钟。"
+            "手机连接配网热点时暂停重试，离开热点后重新计时。</p>");
+  if (redirect) html += F("<input type='hidden' name='redirect' value='1'>");
+  html += F("<button type='submit'>保存重连间隔</button></form>");
+  return html;
+}
+
+void sendPortalRetryPage(int status, const char *message) {
+  String html = F("<!DOCTYPE html><html lang='zh-CN'><head><meta charset='utf-8'>"
+                "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+                "<title>WiFi 重连设置</title>"
+                "<style>body{font-family:-apple-system,sans-serif;max-width:480px;"
+                "margin:24px auto;padding:0 16px;color:#222}"
+                "label{display:block;margin-top:16px;font-weight:600}"
+                "input{width:100%;box-sizing:border-box;padding:8px;font-size:16px;margin-top:4px}"
+                "button{padding:8px 12px;font-size:16px}"
+                "</style></head><body><main><h1>WiFi 重连设置</h1>");
+  if (message && *message) html += String("<p role='status'>") + message + "</p>";
+  html += wifiRetryForm("/wifi-retry", false);
+  html += F("<p><a href='/'>返回配网首页</a></p></main></body></html>");
+  wifiManager.server->send(status, "text/html; charset=utf-8", html);
+}
+
+void setupPortalRetryRoutes() {
+  wifiManager.server->on("/wifi-retry", HTTP_GET, []() {
+    sendPortalRetryPage(200, wifiManager.server->arg("saved") == "1" ? "重连间隔已保存。" : "");
+  });
+  wifiManager.server->on("/wifi-retry", HTTP_POST, []() {
+    WifiRetrySaveResult result = updateWifiRetrySeconds(wifiManager.server->arg("seconds"));
+    if (result == WifiRetrySaveResult::Invalid) {
+      sendPortalRetryPage(400, "请输入 30 至 86400 之间的整数秒。原设置未更改。");
+    } else if (result == WifiRetrySaveResult::StorageError) {
+      sendPortalRetryPage(500, "保存失败，请检查设备存储后重试。原设置未更改。");
+    } else {
+      wifiManager.server->sendHeader("Location", "/wifi-retry?saved=1");
+      wifiManager.server->send(303);
+    }
+  });
+}
 
 void configModeCallback(WiFiManager *wm) {
   tft.fillScreen(TFT_BLACK);
@@ -1861,6 +1934,11 @@ void configModeCallback(WiFiManager *wm) {
 void setupWiFi() {
   wifiManager.setAPCallback(configModeCallback);
   wifiManager.setConfigPortalBlocking(false);
+  wifiManager.setWebServerCallback(setupPortalRetryRoutes);
+  const char *menu[] = {"wifi", "custom", "info", "exit", "sep", "update"};
+  wifiManager.setMenu(menu, sizeof(menu) / sizeof(menu[0]));
+  wifiManager.setCustomMenuHTML("<form action='/wifi-retry' method='get'>"
+                                "<button>WiFi 重连设置</button></form><br/>");
 
   tft.fillScreen(TFT_BLACK);
   tft.setTextDatum(TL_DATUM);
@@ -1872,6 +1950,25 @@ void setupWiFi() {
   Serial.printf("[wifi] autoConnect result=%d ssid=%s ip=%s\n", ok, WiFi.SSID().c_str(),
                 WiFi.localIP().toString().c_str());
   Serial.printf("[wifi] bridge host = '%s'\n", bridgeHost.c_str());
+  wifiRecovery.begin(millis());
+  wifiRecovery.setRetryInterval(wifiRetrySeconds * 1000UL, millis());
+}
+
+void recoverWiFi() {
+  bool portalHasClients = wifiManager.getConfigPortalActive() && WiFi.softAPgetStationNum() > 0;
+  bool stationEnabled = (WiFi.getMode() & WIFI_STA) != 0;
+  WifiRecoveryEvent event = wifiRecovery.update(millis(), wifiDisabledForWiredLink,
+      WiFi.status() == WL_CONNECTED, portalHasClients, stationEnabled, WiFi, wifiManager);
+  if (event == WifiRecoveryEvent::Retrying) {
+    Serial.println("[wifi] retrying saved network");
+  } else if (event == WifiRecoveryEvent::PortalAttemptTimedOut) {
+    Serial.println("[wifi] retry timed out; setup portal remains available");
+  } else if (event == WifiRecoveryEvent::PortalRetryPaused) {
+    Serial.println("[wifi] retry paused while a device uses the setup portal");
+  } else if (event == WifiRecoveryEvent::PortalClosed) {
+    Serial.printf("[wifi] connected; setup portal closed, ip=%s\n",
+                  WiFi.localIP().toString().c_str());
+  }
 }
 
 bool parseStatusJson(const String &payload) {
@@ -2113,6 +2210,10 @@ void handleRoot() {
   html += "<button type='submit'>保存</button>";
   html += "</form>";
 
+  html += F("<h2 style='font-size:16px;margin-top:24px'>WiFi 重连设置</h2>");
+  if (webServer.arg("wifi_retry_saved") == "1") html += F("<p role='status'>重连间隔已保存。</p>");
+  html += wifiRetryForm("/api/wifi-retry", true);
+
   html += "<h2 style='font-size:16px;margin-top:28px'>额度重置时间</h2>";
   html += "<form method='POST' action='/api/reset-time'><select name='format'>";
   html += String("<option value='countdown'") + (!resetTimeDateTime ? " selected" : "") + ">倒计时</option>";
@@ -2184,6 +2285,7 @@ void handleApiInfo() {
   doc["bridge"] = bridgeHost;
   doc["mode"] = displayModeName(displayMode);           // configured mode
   doc["reset_time_format"] = resetTimeFormatName();
+  doc["wifi_retry_seconds"] = wifiRetrySeconds;
   doc["effective"] = displayModeName(effectiveMode());   // what's on screen now
   doc["music_playing"] = statusMusicPlaying;
   doc["showing"] = (currentApp == APP_CLAUDE) ? "claude" : "codex";
@@ -2257,6 +2359,22 @@ void handleApiUsbWifi() {
   saveUsbWifiOffWhenWired();
   Serial.printf("[api] USB WiFi off = %d\n", usbWifiOffWhenWired);
   webServer.send(200, "text/plain", "ok");
+}
+
+void handleApiWifiRetry() {
+  WifiRetrySaveResult result = updateWifiRetrySeconds(webServer.arg("seconds"));
+  if (result == WifiRetrySaveResult::Invalid) {
+    webServer.send(400, "text/html; charset=utf-8",
+                   "<p>请输入 30 至 86400 之间的整数秒。原设置未更改。</p><a href='/'>返回设置</a>");
+  } else if (result == WifiRetrySaveResult::StorageError) {
+    webServer.send(500, "text/html; charset=utf-8",
+                   "<p>保存失败，请检查设备存储后重试。原设置未更改。</p><a href='/'>返回设置</a>");
+  } else if (webServer.arg("redirect") == "1") {
+    webServer.sendHeader("Location", "/?wifi_retry_saved=1");
+    webServer.send(303);
+  } else {
+    webServer.send(200, "text/plain", "ok");
+  }
 }
 
 void handleApiBrightness() {
@@ -2578,6 +2696,7 @@ void setupWebServer() {
   webServer.on("/api/display", HTTP_POST, handleApiDisplay);
   webServer.on("/api/reset-time", HTTP_POST, handleApiResetTime);
   webServer.on("/api/usb-wifi", HTTP_POST, handleApiUsbWifi);
+  webServer.on("/api/wifi-retry", HTTP_POST, handleApiWifiRetry);
   webServer.on("/api/bridge", HTTP_POST, handleApiBridge);
   webServer.on("/api/brightness", HTTP_POST, handleApiBrightness);
   webServer.on("/sprite/claude/reset", HTTP_POST, []() { handleSpriteReset(APP_CLAUDE); });
@@ -2605,6 +2724,7 @@ void setup() {
   loadDisplayMode();
   loadResetTimeFormat();
   loadUsbWifiOffWhenWired();
+  loadWifiRetrySeconds();
   loadCustomSpriteState();
 
   tft.init();
@@ -2616,7 +2736,7 @@ void setup() {
 
   setupWiFi();
 
-  if (WiFi.status() == WL_CONNECTED) {
+  if (!wifiManager.getConfigPortalActive() && WiFi.status() == WL_CONNECTED) {
     setupWebServer();
     webServerStarted = true;
 
@@ -2637,10 +2757,13 @@ void setup() {
 }
 
 void loop() {
-  if (!wifiDisabledForWiredLink) wifiManager.process(); // keeps the config portal alive until WiFi is set up
   pumpSerial();          // wired (USB) bridge frames
+  recoverWiFi();         // protect portal clients before handling their requests
+  if (!wifiDisabledForWiredLink) wifiManager.process(); // keep the config portal alive
+  recoverWiFi();         // handle connections completed by the portal
 
-  if (!webServerStarted && WiFi.status() == WL_CONNECTED) {
+  if (!wifiDisabledForWiredLink && !webServerStarted && !wifiManager.getConfigPortalActive() &&
+      WiFi.status() == WL_CONNECTED) {
     // WiFi came up after boot (portal or slow AP); the portal has released
     // port 80 by now, so the admin server can bind it
     setupWebServer();

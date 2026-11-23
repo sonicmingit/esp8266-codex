@@ -1,7 +1,7 @@
 #pragma once
 
 // ---- Firmware version (shown on the first-time WiFi setup screen & /api/info) ----
-#define FW_VERSION "0.4.5-sonic"
+#define FW_VERSION "0.4.7-sonic"
 
 // ---- Bridge polling ----
 #define BRIDGE_DEFAULT_PORT 8765
@@ -11,6 +11,12 @@
 
 // ---- WiFiManager ----
 #define WIFI_PORTAL_AP_NAME "AI-Clock-Setup"
+#define WIFI_RETRY_DEFAULT_SECONDS 300UL
+#define WIFI_RETRY_MIN_SECONDS 30UL
+#define WIFI_RETRY_MAX_SECONDS 86400UL
+#define WIFI_PORTAL_RETRY_WINDOW_MS 15000UL
+#define WIFI_RETRY_CONFIG_FILE "/wifi_retry.txt"
+#define WIFI_RETRY_CONFIG_TMP_FILE "/wifi_retry.tmp"
 #define WIFI_CONFIG_FILE "/bridge_host.txt"
 #define DISPLAY_MODE_FILE "/display_mode.txt"
 #define RESET_TIME_FORMAT_FILE "/reset_time_format.txt"
